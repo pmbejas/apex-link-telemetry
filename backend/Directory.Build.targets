@@ -1,0 +1,9 @@
+<Project>
+  <Target Name="NormalizarRutasAbsolutasCompilacion" BeforeTargets="CoreCompile;GenerateMSBuildEditorConfigFileShouldRun">
+    <ItemGroup>
+      <_CompilacionRutasAbsolutas Include="@(Compile->'%(FullPath)')" />
+      <Compile Remove="@(Compile)" />
+      <Compile Include="@(_CompilacionRutasAbsolutas)" />
+    </ItemGroup>
+  </Target>
+</Project>

@@ -1,0 +1,36 @@
+# Compilados y dependencias .NET / Node
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+publish/
+node_modules/
+.next/
+
+# Bases de datos locales SQLite y archivos temporales WAL/SHM
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Variables de entorno, secretos y credenciales (PROHIBIDO SUBIR)
+.env
+.env.*
+!.env.example
+appsettings.Production.json
+appsettings.*.local.json
+secrets.json
+
+# IDE y sistema operativo
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+Thumbs.db
+.DS_Store
+TestResults/
+coverage/
+sdk/
