@@ -13,4 +13,7 @@ public sealed class DatosNeumaticosDto
 
     [JsonPropertyName("wear")]
     public float[] DesgastePorcentaje { get; set; } = Array.Empty<float>();
+
+    [JsonPropertyName("tempBrakesC")]
+    public float[] TemperaturaFrenosC { get; set; } = Array.Empty<float>();
 }

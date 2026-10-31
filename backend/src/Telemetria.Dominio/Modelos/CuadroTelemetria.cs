@@ -17,14 +17,23 @@ public sealed record class CuadroTelemetria
     public int Marcha { get; init; }
     public float Acelerador { get; init; }
     public float Freno { get; init; }
+    public float Embrague { get; init; }
     public float Direccion { get; init; }
     public bool DrsDisponible { get; init; }
     public bool DrsHabilitado { get; init; }
+    public float ControlTraccion { get; init; }
+    public float Abs { get; init; }
+    public float RepartoFrenada { get; init; } = 58.5f;
+    public bool LimitadorBoxesActivo { get; init; }
 
-    // Dinámica de neumáticos (4 ruedas: 0=FL, 1=FR, 2=RL, 3=RR)
+    // Dinámica de neumáticos y frenos (4 ruedas: 0=FL, 1=FR, 2=RL, 3=RR)
     public float[] PresionNeumaticosPsi { get; init; } = Array.Empty<float>();
     public float[] TemperaturaNeumaticosC { get; init; } = Array.Empty<float>();
     public float[] DesgasteNeumaticos { get; init; } = Array.Empty<float>();
+    public float[] TemperaturaFrenosC { get; init; } = Array.Empty<float>();
+    public string CompuestoNeumatico { get; init; } = "SOFT";
+    public float CombustibleLitros { get; init; }
+    public float CapacidadCombustibleLitros { get; init; }
 
     // Cronometraje, sectores (base 1..3) y correlación con persistencia
     public int TiempoVueltaActualMs { get; init; }

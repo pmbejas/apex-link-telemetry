@@ -36,20 +36,31 @@ public static class MapeadorTelemetria
                 Marcha = cuadro.Marcha,
                 Acelerador = cuadro.Acelerador,
                 Freno = cuadro.Freno,
+                Embrague = cuadro.Embrague,
                 Direccion = cuadro.Direccion,
                 DrsDisponible = cuadro.DrsDisponible,
-                DrsHabilitado = cuadro.DrsHabilitado
+                DrsHabilitado = cuadro.DrsHabilitado,
+                ControlTraccion = cuadro.ControlTraccion,
+                Abs = cuadro.Abs,
+                RepartoFrenada = cuadro.RepartoFrenada,
+                LimitadorBoxesActivo = cuadro.LimitadorBoxesActivo,
+                EstaEnBoxes = cuadro.EstaEnBoxes
             },
             Neumaticos = new DatosNeumaticosDto
             {
                 PresionPsi = cuadro.PresionNeumaticosPsi,
                 TemperaturaInternaC = cuadro.TemperaturaNeumaticosC,
-                DesgastePorcentaje = cuadro.DesgasteNeumaticos
+                DesgastePorcentaje = cuadro.DesgasteNeumaticos,
+                TemperaturaFrenosC = cuadro.TemperaturaFrenosC
             },
             Tiempos = new DatosTiemposDto
             {
                 TiempoVueltaMs = cuadro.TiempoVueltaActualMs,
                 TiempoVueltaTexto = cuadro.TiempoVueltaActualTexto,
+                UltimoTiempoVueltaMs = cuadro.UltimoTiempoVueltaMs,
+                UltimoTiempoVueltaTexto = string.IsNullOrWhiteSpace(cuadro.UltimoTiempoVueltaTexto) || cuadro.UltimoTiempoVueltaTexto == "-:--:---"
+                    ? "--:--.---"
+                    : cuadro.UltimoTiempoVueltaTexto,
                 MejorTiempoMs = cuadro.MejorTiempoMs,
                 MejorTiempoTexto = cuadro.MejorTiempoTexto,
                 DeltaMs = cuadro.DeltaMs,
@@ -67,7 +78,10 @@ public static class MapeadorTelemetria
                 Bandera = cuadro.Bandera,
                 Posicion = cuadro.PosicionCarrera,
                 Circuito = cuadro.Circuito,
-                ModeloAuto = cuadro.ModeloAuto
+                ModeloAuto = cuadro.ModeloAuto,
+                CombustibleLitros = cuadro.CombustibleLitros,
+                CapacidadCombustibleLitros = cuadro.CapacidadCombustibleLitros,
+                CompuestoNeumatico = cuadro.CompuestoNeumatico
             }
         };
     }

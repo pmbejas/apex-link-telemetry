@@ -79,6 +79,24 @@ public sealed class ServicioTelemetriaRelay : BackgroundService
                 CuadroTelemetria cuadroActual = _lectorTelemetria.ObtenerCuadroActual();
                 cuadroActual = await ProcesarTransicionDeVueltaAsync(cuadroActual, tokenDetencion);
 
+                if (_mejorTiempoSesionMs > 0 && (cuadroActual.MejorTiempoMs <= 0 || _mejorTiempoSesionMs < cuadroActual.MejorTiempoMs))
+                {
+                    TimeSpan ts = TimeSpan.FromMilliseconds(_mejorTiempoSesionMs);
+                    string textoMejor = $"{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds:D3}";
+                    int delta = cuadroActual.DeltaMs != 0
+                        ? cuadroActual.DeltaMs
+                        : ((cuadroActual.TiempoVueltaActualMs > 0 && cuadroActual.ProgresoPistaNormalizado > 0.001f)
+                            ? (cuadroActual.TiempoVueltaActualMs - (int)Math.Round(cuadroActual.ProgresoPistaNormalizado * _mejorTiempoSesionMs))
+                            : 0);
+
+                    cuadroActual = cuadroActual with
+                    {
+                        MejorTiempoMs = _mejorTiempoSesionMs,
+                        MejorTiempoTexto = textoMejor,
+                        DeltaMs = delta
+                    };
+                }
+
                 if (cuadroActual.EstadoSimulador == ESTADO_SIMULADOR_EN_PISTA && !string.IsNullOrWhiteSpace(cuadroActual.Circuito))
                 {
                     _muestrasAcumuladasVuelta++;
@@ -186,8 +204,13 @@ public sealed class ServicioTelemetriaRelay : BackgroundService
 
         int[] sectoresConsolidados = MapeadorTelemetria.ConsolidarSectoresMs(cuadroActual.TiemposSectoresMs, tiempoCerradoMs);
 
+        TimeSpan tsRecord = TimeSpan.FromMilliseconds(_mejorTiempoSesionMs);
+        string textoRecord = $"{tsRecord.Minutes:D2}:{tsRecord.Seconds:D2}.{tsRecord.Milliseconds:D3}";
+
         cuadroActual = cuadroActual with
         {
+            MejorTiempoMs = _mejorTiempoSesionMs,
+            MejorTiempoTexto = textoRecord,
             TiemposSectoresMs = sectoresConsolidados,
             VueltaCerradaId = idVueltaCerrada,
             MuestrasVueltaCerrada = _muestrasAcumuladasVuelta,

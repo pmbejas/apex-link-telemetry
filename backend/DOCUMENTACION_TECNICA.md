@@ -6346,3 +6346,765 @@ Se creó el proyecto `backend/tests/Telemetria.Api.IntegrationTests/` con `Micro
 
 
 
+
+
+---
+
+## 🏎️ Fase 8: Integración Completa de Telemetría Dinámica de Chasis, Boxes, Microsectores y Conectividad Móvil (Backend ↔ Frontend DDU)
+
+> **Objetivo de la Fase:** Resolver la desconexión observada en el Dashboard Display Unit (DDU) móvil, donde sólo se mostraban RPMs, marchas y neumáticos, mientras que el control de tracción (TC), ABS, limitador de boxes (Pit Limiter), microsectores, reparto de frenada (Brake Bias), temperatura de discos de freno y combustible permanecían estáticos o inactivos, además de permitir la conectividad en teléfonos móviles tanto vía túnel USB determinístico (ADB) como a través de red local Wi-Fi.
+
+---
+
+### 1. Diagnóstico de Causa Raíz
+
+1. **Campos no leídos ni mapeados en el Backend:**
+   - La estructura binaria de Assetto Corsa (`EstructuraFisicaAC`) expone nativamente `Tc`, `Abs`, `PitLimiterOn`, `BrakeBias`, `BrakeTemp[4]`, `Fuel` y `Clutch`.
+   - La estructura gráfica (`EstructuraGraficaAC`) expone `TyreCompound`, `IsInPit` e `IsInPitLane`.
+   - En fases previas, `LectorAssettoCorsaWin32` descartaba estas variables, `CuadroTelemetria` carecía de los campos de chasis y `PaqueteTelemetriaDto` no los incluía en la serialización JSON a 60 Hz hacia el WebSocket.
+2. **Desconexión en el Store del Frontend DDU (`apex-link-display`):**
+   - El método `updateTelemetry(frame)` en `useTelemetryStore.ts` únicamente reemplazaba el subobjeto `telemetry`, dejando las propiedades de estado `chassis` (TC, ABS, Bias), `isInPitLane`, `pitLimiterActive`, `brakes` (temperatura de discos) y `fuel` en sus valores ficticios iniciales.
+   - Los 20 microsectores de la barra inferior sólo se computaban dinámicamente dentro de la simulación artificial de `useMockTelemetry.ts`; al recibir telemetría real por WebSocket, la barra permanecía estática.
+3. **Restricción de Conectividad en Dispositivos Móviles:**
+   - En Android, `localhost` hace referencia a la propia pila de red del teléfono (`127.0.0.1`).
+   - Sin ejecutar el túnel determinístico (`adb reverse`), el teléfono no puede resolver los servicios de la PC.
+   - Adicionalmente, `useTelemetryWebSocket.ts` hardcodeaba la dirección `ws://localhost:8080/ws/telemetry`, lo que impedía utilizar el DDU mediante Wi-Fi local (`http://192.168.x.x:5173`) debido a que el socket intentaba conectarse a la interfaz de bucle invertido del propio celular.
+   - El script `iniciar-enlace-usb.ps1` tenía configurado por defecto el puerto frontend `:3000`, mientras que el servidor de desarrollo Vite opera en el puerto `:5173`.
+
+---
+
+### 2. Modificaciones Implementadas en el Backend (.NET 10)
+
+#### A. Modelo de Dominio (`CuadroTelemetria.cs`)
+Se incorporaron las propiedades fuertemente tipadas en el registro inmutable de dominio `Telemetria.Dominio.Modelos.CuadroTelemetria`:
+- `ControlTraccion` (`float`): Nivel de control de tracción activo reportado por la física del vehículo.
+- `Abs` (`float`): Nivel o umbral de frenada antibloqueo en funcionamiento.
+- `LimitadorBoxesActivo` (`bool`): Estado binario del interruptor del limitador de velocidad en calle de boxes.
+- `RepartoFrenada` (`float`): Porcentaje de sesgo del freno hacia el eje delantero (normalizado en base porcentual, ej. 58.5%).
+- `TemperaturaFrenosC` (`float[]`): Vector de 4 elementos con la temperatura en °C de los discos de freno [FL, FR, RL, RR].
+- `CompuestoNeumatico` (`string`): Denominación canónica del compuesto de neumático montado (`"SOFT"`, `"MEDIUM"`, etc.).
+- `CombustibleLitros` (`float`): Cantidad remanente de carburante en el tanque.
+- `CapacidadCombustibleLitros` (`float`): Capacidad volumétrica máxima del tanque de combustible.
+- `Embrague` (`float`): Recorrido normalizado del pedal de embrague (`0.0` = suelto, `1.0` = fondo).
+
+#### B. Lector de Memoria Compartida Win32 (`LectorAssettoCorsaWin32.cs`)
+En el método `ConstruirCuadroTelemetria`:
+- Se extendió el bloque de punteros fijos `fixed (char* ...)` para incluir `punteroCompuesto = grafica.TyreCompound`.
+- Se lee e interpola el compuesto con `UtilitariosInteroperabilidadAC.LeerCadenaFija(punteroCompuesto, 33)`.
+- Se normaliza el reparto de frenada (`fisica.BrakeBias` a porcentaje).
+- Se leen de forma directa `fisica.Tc`, `fisica.Abs`, `fisica.PitLimiterOn == 1`, `fisica.Clutch`, `fisica.BrakeTemp` y `fisica.Fuel`.
+
+#### C. Generador Mock Determinístico (`GeneradorTelemetriaMock.cs`)
+Se incorporaron valores dinámicos y realistas para pruebas sin simulador:
+- Control de tracción prefijado en nivel `2.0f`.
+- ABS en nivel `3.0f`.
+- Reparto de frenada en `58.5f`%.
+- Temperaturas de frenos dinámicas `[623.0f, 648.0f, 634.0f, 701.0f]`.
+- Compuesto de neumático `"SOFT"`.
+- Consumo gradual de combustible según vueltas completadas (`46.2 L - vueltas * 2.45 L`).
+
+#### D. Contratos DTO y Serialización de Alto Rendimiento (`Telemetria.Aplicacion`)
+- **`DatosAutoDto.cs`**: Se agregaron `tc`, `abs`, `brakeBias`, `pitLimiterOn`, `isInPitLane` y `clutch`.
+- **`DatosNeumaticosDto.cs`**: Se agregó el arreglo `tempBrakesC`.
+- **`DatosSesionDto.cs`**: Se agregaron `fuel`, `maxFuel` y `tyreCompound`.
+- **`MapeadorTelemetria.cs`**: Se asignaron los nuevos atributos desde `CuadroTelemetria` hacia los DTOs de salida.
+- **`ContextoSerializacionTelemetria.cs`**: La generación en tiempo de compilación (`JsonSourceGenerationMode.Default`) compila automáticamente las nuevas propiedades preservando la asignación cero de memoria.
+
+---
+
+### 3. Modificaciones Implementadas en el Frontend DDU (`apex-link-display`)
+
+#### A. Contratos TypeScript (`src/types/telemetry.ts`)
+Se sincronizaron las interfaces con el catálogo oficial de DTOs:
+- `CarTelemetry`: Incorporación de `tc?`, `abs?`, `brakeBias?`, `pitLimiterOn?`, `isInPitLane?`, `clutch?`.
+- `TyresTelemetry`: Incorporación de `tempBrakesC?`.
+- `SessionTelemetry`: Incorporación de `fuel?`, `maxFuel?`, `tyreCompound?`.
+
+#### B. Conexión WebSocket Adaptativa (`src/hooks/useTelemetryWebSocket.ts`)
+Se reemplazó la URL fija por la función determinística de resolución de anfitrión:
+```typescript
+const getWsUrl = (): string => {
+  if (typeof window !== 'undefined' && window.location && window.location.hostname) {
+    const host = window.location.hostname;
+    return `ws://${host}:8080/ws/telemetry`;
+  }
+  return 'ws://localhost:8080/ws/telemetry';
+};
+```
+Esta mejora asegura que:
+- Al conectarse vía túnel USB con ADB, `window.location.hostname` es `localhost`, enrutando por `adb reverse`.
+- Al conectarse vía red local Wi-Fi, `window.location.hostname` es la dirección IP de la PC (ej. `192.168.1.50`), conectando el WebSocket automáticamente sin configuración manual.
+
+#### C. Reactividad Integral del Store (`src/store/useTelemetryStore.ts`)
+Dentro de la acción `updateTelemetry(frame)`:
+1. **Actualización de Electrónica de Chasis:** Si el frame reporta `tc`, `abs` o `brakeBias`, se actualiza el objeto reactivo `chassis`, reflejándose de inmediato en los indicadores de `ZoneEChassisControls.tsx`.
+2. **Limitador de Boxes y Overlay a Pantalla Completa:** Se sincronizan `isInPitLane` y `pitLimiterActive`. Al ingresar a boxes o pulsar el limitador, `PitLimiterFullscreenOverlay.tsx` se despliega en pantalla completa mostrando la velocidad colosal y el aviso parpadeante.
+3. **Térmica de Frenos y Nivel de Combustible:** Se actualizan `brakes.tempDiscsC` y `fuel.remainingLiters`.
+4. **Compuesto de Neumáticos Oficial F1:** Se normaliza y asigna el compuesto (`SOFT`, `MEDIUM`, `HARD`, `INTER`, `WET`) impactando los colores sólidos de `ZoneBTyresAndBrakes.tsx`.
+5. **Motor de Microsectores en Tiempo Real:**
+   - Se divide el progreso métrico de la vuelta (`lapProgress` $0.0$ a $1.0$) en 20 tramos equivalentes al 5% del perímetro del circuito.
+   - Al cambiar de vuelta, el arreglo se reinicia colocando el segmento 0 en estado `'active'`.
+   - Conforme avanza el monoplaza, los segmentos transitados se colorean según la referencia de delta cronometrado (`deltaMs`):
+     - $\Delta < -150\text{ ms}$: Récord de sector en color morado (`'purple'`).
+     - $\Delta \le 0\text{ ms}$: Mejora de tiempo en color verde esmeralda (`'green'`).
+     - $\Delta > 0\text{ ms}$: Pérdida de tiempo en color amarillo/gris (`'yellow'`).
+   - El segmento actual pulsa en blanco luminoso (`'active'`).
+   - Simultáneamente se actualizan los 3 macro-sectores S1, S2 y S3 bajo los neumáticos.
+
+---
+
+### 4. Automatización del Enlace USB (`backend/scripts/iniciar-enlace-usb.ps1`)
+Se actualizó el puerto frontend por defecto a `:5173`:
+```powershell
+[int]$PuertoBackend = 8080,
+[int]$PuertoFrontend = 5173,
+```
+El script establece de forma limpia y transparente las dos reglas de túnel inverso determinístico:
+- `adb reverse tcp:8080 tcp:8080` (Telemetría WebSocket y API REST Kestrel).
+- `adb reverse tcp:5173 tcp:5173` (Display de cabina Vite React).
+
+---
+
+### 5. Verificación y Resultados de Compilación
+- **Backend .NET 10:** Compilación de la solución `Telemetria.sln` completa con **0 errores y 0 advertencias**.
+- **Pruebas Unitarias e Integración:**
+  - `Telemetria.Dominio.Tests`: 8 / 8 exitosas.
+  - `Telemetria.Aplicacion.Tests`: 31 / 31 exitosas.
+  - `Telemetria.Api.IntegrationTests`: 4 / 4 exitosas.
+- **Frontend Vite / React:** Compilación `pnpm run build` limpia sin errores de TypeScript (`tsc -b`) y generación de bundle de producción en 840 ms.
+
+
+---
+
+# FASE 9: PERSISTENCIA DE MEJOR VUELTA (PERSONAL BEST), CÁLCULO DE DELTA INSTANTÁNEO Y VISIBILIDAD DE MICROSECTORES
+
+## 1. Justificación y Diagnóstico Integral del Problema
+
+Tras la puesta en marcha de la transmisión de telemetría a 60 Hz y la incorporación de los parámetros de chasis y térmicas en la Fase 8, las pruebas operativas en pista sobre Assetto Corsa revelaron anomalías funcionales en el sistema de cronometraje y en la representación de sectores:
+
+1. **Pérdida y Sobrescritura de la Mejor Vuelta ("Best Lap"):**
+   - En Assetto Corsa, cuando el usuario inicia una sesión de práctica libre o tanda de entrenamiento, la estructura de memoria compartida `SPageFileGraphic` inicializa `IBestTime = 0` y `BestTime = "-:--:---"`.
+   - Cuando el monoplaza cerraba una vuelta rápida, el backend calculaba `_mejorTiempoSesionMs`, pero en el bucle continuo de emisión a 60 Hz de `ServicioTelemetriaRelay.cs` dicho récord no se reinyectaba sobre el cuadro emitido si el simulador seguía reportando 0.
+   - En el frontend, la acción `updateTelemetry` de `useTelemetryStore.ts` reemplazaba íntegramente el objeto `timing` con cada cuadro WebSocket (`FRAME`) recibido, anulando de inmediato el mejor tiempo registrado por el evento `LAP_COMPLETED` en la milésima de segundo siguiente.
+   - En el componente de visualización `ZoneDTiming.tsx`, la verificación de tiempo válido evaluaba únicamente `timing.bestTimeStr !== '--:--.---'`. Al recibir `"-:--:---"` con formato de guiones y dos puntos de Assetto Corsa, el componente mostraba la cadena cruda `"-:--:---"` en lugar de una representación legible o el tiempo consolidado.
+
+2. **Delta Instantáneo Congelado en 0.000:**
+   - La fórmula de cálculo del delta en el lector dependía estrictamente de que `IBestTime > 0` en la memoria de Assetto Corsa. Al no contar con una referencia interna de mejor vuelta de sesión en el lector, el delta permanecía inmutablemente en cero durante toda la tanda de práctica.
+
+3. **Inmovilidad y Oclusión de la Barra de Microsectores (20 Tramos):**
+   - El algoritmo de microsectores en el store de React utilizaba el progreso métrico de pista, pero la condición de transición de vuelta reseteaba los sectores sin considerar el progreso del cuadro activo.
+   - Sumado a ello, la barra de botones flotante de escenarios de depuración (`QuickControlsBar.tsx`) estaba anclada en `bottom-2`, tapando de forma física y directa el centro de la barra inferior de microsectores (`MicrosectorsBar.tsx`, segmentos 8 al 12), impidiendo que el piloto pudiera observar la evolución de los sectores del segundo tercio de la pista.
+
+---
+
+## 2. Modificaciones en la Capa de Infraestructura (`Telemetria.Infraestructura`)
+
+### A. Seguimiento Autónomo de Mejor Vuelta y Delta en [`LectorAssettoCorsaWin32.cs`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link-telemetry/backend/src/Telemetria.Infraestructura/MemoriaCompartida/LectorAssettoCorsaWin32.cs)
+
+Se incorporaron dos variables de estado locales al lector de memoria compartida:
+- `_mejorTiempoSesionLocalMs`: Almacena el tiempo récord absoluto de la sesión activa en milisegundos.
+- `_mejorTiempoSesionLocalTexto`: Cadena normalizada con formato `mm:ss.fff` del récord de sesión.
+
+#### Lógica de Captura y Normalización:
+1. **Detección de Reinicio de Sesión:** Si `grafica.CompletedLaps < _ultimaVueltaConocida`, se limpian `_mejorTiempoSesionLocalMs` y los tiempos de sectores de vuelta.
+2. **Cierre de Vuelta Rápida:** Al incrementarse el contador de vueltas (`grafica.CompletedLaps > _ultimaVueltaConocida`), si la vuelta cerrada fue válida (`validezVueltaCerrada == true`) y `grafica.ILastTime > 0`, se actualiza el récord local:
+   ```csharp
+   if (_mejorTiempoSesionLocalMs == 0 || grafica.ILastTime < _mejorTiempoSesionLocalMs)
+   {
+       _mejorTiempoSesionLocalMs = grafica.ILastTime;
+       var ts = TimeSpan.FromMilliseconds(_mejorTiempoSesionLocalMs);
+       _mejorTiempoSesionLocalTexto = $"{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds:D3}";
+   }
+   ```
+3. **Cálculo de Delta Instantáneo Continuo:**
+   Si la memoria de Assetto Corsa aún no suministra un récord pero el lector ya registró una vuelta cerrada válida:
+   ```csharp
+   int deltaInstantaneoMs = 0;
+   if (mejorTiempoFinalMs > 0 && grafica.ICurrentTime > 0 && grafica.NormalizedCarPosition > 0.001f)
+   {
+       int tiempoEsperadoAlProgresoMs = (int)Math.Round(grafica.NormalizedCarPosition * mejorTiempoFinalMs);
+       deltaInstantaneoMs = grafica.ICurrentTime - tiempoEsperadoAlProgresoMs;
+   }
+   ```
+4. **Sanitización de Cadenas de Texto:** Se eliminó la presencia de cadenas mal formateadas (`"-:--:---"`), sustituyéndolas por la convención estándar del sistema `"--:--.---"`.
+
+---
+
+## 3. Modificaciones en la Capa de Aplicación (`Telemetria.Aplicacion`)
+
+### A. Difusión Continua del Récord en [`ServicioTelemetriaRelay.cs`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link-telemetry/backend/src/Telemetria.Aplicacion/Servicios/ServicioTelemetriaRelay.cs)
+
+En el bucle de difusión a 60 Hz (`EjecutarBucleRelayTelemetriaAsync`), se implementó la consolidación bidireccional entre el seguimiento de sesión del relay (`_mejorTiempoSesionMs`) y el cuadro en curso:
+```csharp
+if (_mejorTiempoSesionMs > 0 && (cuadroActual.MejorTiempoMs <= 0 || _mejorTiempoSesionMs < cuadroActual.MejorTiempoMs))
+{
+    TimeSpan ts = TimeSpan.FromMilliseconds(_mejorTiempoSesionMs);
+    string textoMejor = $"{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds:D3}";
+    int delta = (cuadroActual.TiempoVueltaActualMs > 0 && cuadroActual.ProgresoPistaNormalizado > 0.001f)
+        ? (cuadroActual.TiempoVueltaActualMs - (int)Math.Round(cuadroActual.ProgresoPistaNormalizado * _mejorTiempoSesionMs))
+        : cuadroActual.DeltaMs;
+
+    cuadroActual = cuadroActual with
+    {
+        MejorTiempoMs = _mejorTiempoSesionMs,
+        MejorTiempoTexto = textoMejor,
+        DeltaMs = delta
+    };
+}
+```
+Asimismo, en el método `ConsolidarCierreDeVueltaAsync`, al confirmarse una nueva mejor vuelta (`esRecord == true`), se inyectan inmediatamente `MejorTiempoMs` y `MejorTiempoTexto` formateados en el cuadro transmitido a los clientes WebSocket.
+
+---
+
+## 4. Modificaciones en el Frontend DDU (`apex-link-display`)
+
+### A. Tipado de Estado en [`src/types/ddu.ts`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/types/ddu.ts)
+Se agregaron al contrato `DDUState`:
+- `bestLapTimeMs: number;`
+- `bestLapTimeStr: string;`
+
+### B. Persistencia y Motor de Microsectores en [`src/store/useTelemetryStore.ts`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/store/useTelemetryStore.ts)
+1. **Blindaje de la Mejor Vuelta contra Sobrescrituras:**
+   - La acción `updateTelemetry` extrae y compara `frame.timing.bestTimeMs` contra `state.bestLapTimeMs`.
+   - Si el frame carece de récord (`bestTimeMs <= 0`) pero el estado local ya posee una mejor vuelta registrada previamente, la conserva y la proyecta hacia `telemetry.timing.bestTimeMs` y `telemetry.timing.bestTimeStr`.
+2. **Gestión Inmutable del Evento `LAP_COMPLETED`:**
+   - En `triggerLapCompleted`, se evalúa si la vuelta completada constituye un nuevo récord personal. En tal caso, se actualiza `bestLapTimeMs` y se dispara el overlay a pantalla completa de vuelta rápida (`FASTEST_LAP`) durante 1.5 segundos.
+3. **Algoritmo de 20 Microsectores y 3 Macrosectores:**
+   - Se calcula el índice del microsector activo mediante:
+     $$\text{indiceMicro} = \min(19, \max(0, \lfloor \text{lapProgress} \times 20 \rfloor))$$
+   - Para cada sector previo ($i < \text{indiceMicro}$), su estado se determina según el valor de `deltaMs`:
+     - Récord personal: $\Delta < -150\text{ ms} \rightarrow$ Morado (`'purple'`).
+     - En ritmo o mejora: $\Delta \le 50\text{ ms} \rightarrow$ Verde (`'green'`).
+     - Pérdida de tiempo: $\Delta > 50\text{ ms} \rightarrow$ Amarillo (`'yellow'`).
+     - Primera vuelta sin referencia previa: Verde (`'green'`).
+   - El segmento actual pulsa en color blanco (`'active'`).
+   - Los segmentos futuros permanecen en negro bordeado (`'upcoming'`).
+   - Al detectar un cambio de vuelta (`currentLap !== previousLap`), el arreglo se reinicia colocando el segmento 0 en `'active'` y el resto en `'upcoming'`.
+
+### C. Normalización Visual en [`src/components/zones/ZoneDTiming.tsx`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/components/zones/ZoneDTiming.tsx)
+Se implementó la normalización defensiva de cadenas de tiempo:
+```typescript
+const bestFormatted =
+  timing.bestTimeStr && timing.bestTimeStr !== '--:--.---' && timing.bestTimeStr !== '-:--:---'
+    ? timing.bestTimeStr
+    : bestLapTimeStr && bestLapTimeStr !== '--:--.---' && bestLapTimeStr !== '-:--:---'
+    ? bestLapTimeStr
+    : '--:--.---';
+```
+Garantizando que las tres métricas (`PREDICTED`, `ACTUAL` y `BEST`) se rendericen con tipografía monospace de alta legibilidad sin saltos visuales.
+
+### D. Reubicación de la Barra de Controles en [`src/components/modals/QuickControlsBar.tsx`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/components/modals/QuickControlsBar.tsx)
+Se desplazó el contenedor flotante de controles rápidos de `bottom-2` a `bottom-12`. Con este ajuste de 40 píxeles, la barra de microsectores inferior (`MicrosectorsBar.tsx`, altura de 43 px) queda 100% visible y despejada para el piloto.
+
+---
+
+## 5. Verificación Operativa en Vivo con Simulador Activo
+
+Con el simulador Assetto Corsa en ejecución (`acs.exe`, PID 10892) rodando con el vehículo de Fórmula Híbrida 2026 en el Autodromo Nazionale Monza, se verificó mediante una sonda WebSocket directa a `ws://localhost:8080/ws/telemetry` la emisión fidedigna de los cuadros:
+- **Progreso de Vuelta y Sectores:** `"lapProgress": 0.1285`, `"sector": 1`, `"lapTimeStr": "0:08:816"`.
+- **Mejor Vuelta:** Formato sanitizado `"bestTimeStr": "--:--.---"` listo para registrar el récord en el primer cruce de meta.
+- **Electrónica del Vehículo:** `"tc": 0.14`, `"abs": 0.16`, `"brakeBias": 52`.
+- **Térmicas y Combustible:** Frenos en $26.9^\circ\text{C}$ - $27.3^\circ\text{C}$, combustible en $49.48\text{ L}$ y compuesto `"Soft (C4)"`.
+
+### Resultados de Compilación y Suites de Pruebas:
+- **Backend .NET 10:** Compilación de la solución `Telemetria.sln` con **0 errores y 0 advertencias**.
+- **Pruebas Focalizadas:**
+  - `Telemetria.Infraestructura.Tests`: 20 / 20 superadas (100%).
+  - `Telemetria.Aplicacion.Tests`: 31 / 31 superadas (100%).
+- **Frontend Vite / React:** Compilación `pnpm run build` completada exitosamente en **930 ms** con bundle minificado para producción.
+
+
+---
+
+# FASE 10: INTEGRACIÓN DINÁMICA DE DELTA, EXPOSICIÓN DE ÚLTIMA VUELTA (LAST LAP), NORMALIZACIÓN DE ELECTRÓNICA DE CHASIS Y COLORACIÓN FIDEDIGNA DE SECTORES
+
+## 1. Justificación y Diagnóstico Integral del Problema
+
+Durante los ensayos operativos en pista con Assetto Corsa y el monoplaza de competición, se identificaron cuatro discordancias críticas entre la física del simulador y la telemetría presentada en el Display de Cabina (DDU):
+
+1. **Inactividad del Delta en Tandas de Entrenamiento:**
+   - En tandas libres y vueltas de salida, Assetto Corsa mantiene `IBestTime = 0` hasta consolidar una vuelta cronometrada en la sesión.
+   - La lógica del lector supeditaba el cálculo de delta a la existencia previa de un récord (`IBestTime > 0`), emitiendo `deltaMs: 0`.
+   - Al recibir cero, el componente [`TopDeltaBar.tsx`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/components/zones/TopDeltaBar.tsx) apagaba las barras comparativas (verde a la izquierda / roja a la derecha) y mostraba un valor fijo inerte de `0.000` en tipografía gris, privando al piloto de referencias inmediatas de ritmo.
+
+2. **Inmovilidad de los Indicadores de Control de Tracción (TC) y Frenos Antibloqueo (ABS):**
+   - En la memoria compartida de Assetto Corsa (`SPageFilePhysics`), las propiedades `fisica.Tc` y `fisica.Abs` no son selectores enteros, sino magnitudes físicas continuas de límite de deslizamiento e intervención que oscilan en pasos escalonados (ej. `0.08`, `0.12`, `0.16`).
+   - En el frontend, la conversión mediante `Math.round(frame.car.tc)` transformaba `0.08` a `0`, dejando el indicador permanentemente en cero o sin reaccionar a los niveles seleccionados en cabina.
+
+3. **Reemplazo de "Predicted Lap" por "Last Lap" en el Cronometraje Central:**
+   - El panel de tiempos de tres filas [`ZoneDTiming.tsx`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/components/zones/ZoneDTiming.tsx) exhibía una estimación predictiva en la tarjeta superior (`PREDICTED`).
+   - El requerimiento de ingeniería solicitó reemplazar dicho bloque por la última vuelta completada (`LAST` o `LAST LAP`), de modo que el piloto visualice en todo momento su registro de vuelta cerrada anterior (`UltimoTiempoVueltaTexto`), su tiempo en curso (`TiempoVueltaActualTexto`) y su récord de sesión (`MejorTiempoTexto`).
+
+4. **Incoherencia en los Colores de Microsectores (Marcado en Verde sin Mejora):**
+   - El algoritmo del store React asignaba forzosamente `status = 'green'` a todos los microsectores si no existía aún un récord de vuelta cerrada en la sesión o si el delta no era estrictamente negativo.
+   - En telemetría oficial de competición, cuando un vehículo rueda por debajo del ritmo récord ($\Delta > 0\text{ ms}$) o no mejora el parcial de referencia, el tramo debe colorearse en gris/amarillo (`yellow`), reservando el verde esmeralda (`green`) exclusivamente para ganancias efectivas de tiempo ($\Delta \le 0\text{ ms}$) y el morado (`purple`) para récords absolutos ($\Delta < -150\text{ ms}$).
+
+---
+
+## 2. Modificaciones en la Capa de Infraestructura (`Telemetria.Infraestructura`)
+
+### A. Cálculo Dual de Delta y Normalización en [`LectorAssettoCorsaWin32.cs`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link-telemetry/backend/src/Telemetria.Infraestructura/MemoriaCompartida/LectorAssettoCorsaWin32.cs)
+
+1. **Canal Nativo `PerformanceMeter`:**
+   - La estructura física de Assetto Corsa (`EstructuraFisicaAC`) cuenta con el campo nativo `PerformanceMeter` (offset 312), que representa la diferencia instantánea en segundos calculada por el motor de físicas del juego.
+   - Si `Math.Abs(fisica.PerformanceMeter) > 0.0001f`, el lector extrae y convierte el valor directamente a milisegundos:
+     $$\text{deltaInstantaneoMs} = \lfloor \text{fisica.PerformanceMeter} \times 1000 + 0.5 \rfloor$$
+2. **Estimación Continua ante Ausencia de Récord:**
+   - Si `PerformanceMeter == 0.0f` y ya existe un récord cerrado (`mejorTiempoFinalMs > 0`), se calcula:
+     $$\text{deltaInstantaneoMs} = \text{ICurrentTime} - \lfloor \text{NormalizedCarPosition} \times \text{mejorTiempoFinalMs} \rfloor$$
+   - Si aún no existe récord en la tanda (vuelta de salida), se calcula la diferencia respecto al tiempo de referencia dinámico del trazado ($\approx 70\text{ m/s}$ de velocidad media según longitud de pista o base de $81240\text{ ms}$ para Monza), garantizando que el delta oscile en tiempo real desde el instante cero.
+3. **Escalado Lineal de Electrónica (TC y ABS):**
+   - Si `fisica.Tc > 0.001f && fisica.Tc <= 1.0f`, se mapea el valor de umbral continuo a escala estándar de 1 a 12:
+     $$\text{tcNivel} = \text{Clamp}(\lfloor \text{fisica.Tc} \times 12.5 + 0.5 \rfloor, 1, 12)$$
+   - Idéntico escalado se aplica a `fisica.Abs`, preservando valores mayores a 1 si el simulador los suministra en formato directo.
+
+---
+
+## 3. Modificaciones en la Capa de Aplicación (`Telemetria.Aplicacion`)
+
+### A. Contrato de Tiempos y Mapeo en [`DatosTiemposDto.cs`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link-telemetry/backend/src/Telemetria.Aplicacion/Dtos/Responses/DatosTiemposDto.cs) y [`MapeadorTelemetria.cs`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link-telemetry/backend/src/Telemetria.Aplicacion/Mappings/MapeadorTelemetria.cs)
+
+Se incorporaron al DTO de tiempos los atributos serializables de la última vuelta cerrada:
+- `lastLapTimeMs`: Milisegundos de la vuelta previa.
+- `lastLapTimeStr`: Representación textual normalizada `mm:ss.fff` o `"--:--.---"`.
+
+En `MapeadorTelemetria.cs`, se mapean directamente desde `cuadro.UltimoTiempoVueltaMs` y `cuadro.UltimoTiempoVueltaTexto`.
+
+### B. Respeto del Delta en [`ServicioTelemetriaRelay.cs`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link-telemetry/backend/src/Telemetria.Aplicacion/Servicios/ServicioTelemetriaRelay.cs)
+
+Se actualizó la sincronización para respetar prioritariamente el delta calculado por el lector:
+```csharp
+int delta = cuadroActual.DeltaMs != 0
+    ? cuadroActual.DeltaMs
+    : ((cuadroActual.TiempoVueltaActualMs > 0 && cuadroActual.ProgresoPistaNormalizado > 0.001f)
+        ? (cuadroActual.TiempoVueltaActualMs - (int)Math.Round(cuadroActual.ProgresoPistaNormalizado * _mejorTiempoSesionMs))
+        : 0);
+```
+
+---
+
+## 4. Modificaciones en el Frontend DDU (`apex-link-display`)
+
+### A. Contratos TypeScript en [`src/types/telemetry.ts`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/types/telemetry.ts)
+Se agregaron a `TimingTelemetry`:
+- `lastLapTimeMs?: number;`
+- `lastLapTimeStr?: string;`
+
+### B. Panel de Tiempos Reestructurado en [`src/components/zones/ZoneDTiming.tsx`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/components/zones/ZoneDTiming.tsx)
+Se sustituyó `PREDICTED` por `LAST`:
+- Muestra `lastLapFormatted` obtenido reactivamente de `timing.lastLapTimeStr`, con fallback a `lastCompletedLap?.lapTimeStr` o `"--:--.---"`.
+- Conserva `ACTUAL` (`timing.lapTimeStr`) y `BEST` (`timing.bestTimeStr`) con brillo purpúreo.
+
+### C. Normalización de Chasis y Coloración de Sectores en [`src/store/useTelemetryStore.ts`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/store/useTelemetryStore.ts)
+1. **Electrónica:**
+   - Soporte dual para valores normalizados $(\le 1.0)$ y enteros directos $(> 1.0)$ en `tc`, `abs` y `brakeBias`.
+2. **Matriz de Colores de Sectores:**
+   - Se eliminó el forzado de verde en ausencia de récord.
+   - Segmentos transitados ($i < \text{indiceMicro}$):
+     - Récord: $\Delta < -150\text{ ms} \rightarrow$ Morado (`'purple'`).
+     - Mejora: $\Delta \le 0\text{ ms} \rightarrow$ Verde (`'green'`).
+     - Pérdida de tiempo o sin referencia: $\Delta > 0\text{ ms} \rightarrow$ Amarillo/Gris (`'yellow'`), renderizado en CSS con `bg-zinc-700`.
+   - Se aplicó la misma regla a los tres macrosectores S1, S2 y S3 bajo los neumáticos.
+
+---
+
+## 5. Verificación Operativa en Vivo con Sonda WebSocket
+
+Con el simulador Assetto Corsa conectado en Monza con monoplaza de competición, la sonda WebSocket a `ws://localhost:8080/ws/telemetry` confirmó la transmisión:
+```json
+{
+  "lapTimeMs": 89172,
+  "lapTimeStr": "1:29:172",
+  "lastLapTimeMs": 0,
+  "lastLapTimeStr": "--:--.---",
+  "bestTimeMs": 0,
+  "bestTimeStr": "--:--.---",
+  "deltaMs": 18766,
+  "currentLap": 0,
+  "sector": 1,
+  "lapProgress": 0.8563674
+}
+```
+- **Delta:** `deltaMs = 18766` ($+18.766\text{ s}$), activando la barra roja derecha de `TopDeltaBar.tsx`.
+- **Sectores:** Con delta positivo, los sectores completados se representan fielmente en **gris** (`yellow`), eliminando el falso verde.
+- **Electrónica:** `brakeBias = 53.0%`.
+- **Compilación:** Backend .NET 10 y Frontend Vite / React al 100% sin errores ni advertencias (51 pruebas unitarias superadas).
+
+
+---
+
+# FASE 11: OPTIMIZACIÓN DEL DELTA DE SESIÓN ACTIVA, CONDICIONAMIENTO DEL OVERLAY DE BOXES Y DISPARO REACTIVO DE OVERLAYS DE CHASIS
+
+## 1. Justificación y Diagnóstico Integral del Problema
+
+Tras las pruebas en tiempo real con el simulador Assetto Corsa rodando en el Autodromo Nazionale Monza, se detectaron cuatro aspectos funcionales que requerían refinamiento:
+
+1. **Persistencia Indebida del Overlay de Boxes en Estado de Pausa:**
+   - La propiedad `grafica.IsInPit` en Assetto Corsa toma valor `1` tanto en el garaje como al presionar la tecla de pausa (menú ESC), sin importar si el monoplaza se encuentra físicamente circulando por el carril de boxes.
+   - En el frontend, el componente [`PitLimiterFullscreenOverlay.tsx`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/components/overlays/PitLimiterFullscreenOverlay.tsx) evaluaba únicamente `if (!isInPitLane) return null;`, provocando que el cartel a pantalla completa de "PIT LIMITER" permaneciera bloqueando la visión del usuario mientras el juego estaba pausado.
+
+2. **Falta de Activación de Overlays al Modificar Electrónica desde el Volante:**
+   - El método `showTimedOverlay` en [`useTelemetryStore.ts`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/store/useTelemetryStore.ts) únicamente era accionado de forma manual mediante clics en la interfaz web (`setChassisValue`).
+   - Al recibir cuadros de telemetría a 60 Hz (`updateTelemetry`), no existía un comparador de estado entre el cuadro entrante y el estado previo. En consecuencia, cuando el piloto utilizaba selectores rotativos o pulsadores en su volante para ajustar el reparto de frenada (`BrakeBias`), control de tracción (`TC`) o frenos antibloqueo (`ABS`), los valores numéricos cambiaban en los paneles estáticos pero no se desplegaba el overlay temporal de pantalla completa de 1 segundo característico de la Fórmula 1.
+
+3. **Ponderación Artificial del Delta contra Sesiones Anteriores:**
+   - Para evitar que el delta permaneciera inerte en la vuelta inicial de salida, se había incorporado una estimación predeterminada basada en la longitud de pista y un tiempo base de 81 segundos.
+   - El requerimiento de fidelidad de simulación exigió eliminar cualquier interpolación hipotética y circunscribir el delta exclusivamente a lo que el propio motor de físicas de Assetto Corsa calcula para la sesión activa en curso.
+
+4. **Comportamiento del Control de Tracción (TC):**
+   - Se analizó el comportamiento de `fisica.Tc` en Assetto Corsa: en monoplazas de Fórmula (como la serie RSS Formula), la electrónica emite de forma binaria (`0.0f` = apagado, `1.0f` = encendido) debido a la prohibición reglamentaria de la FIA sobre ayudas activas de tracción. En vehículos GT3 o turismos, la señal modula en pasos continuos proporcionales al dial.
+
+---
+
+## 2. Modificaciones en la Capa de Infraestructura (`Telemetria.Infraestructura`)
+
+### A. Condicionamiento Físico de Boxes y Limitador en [`LectorAssettoCorsaWin32.cs`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link-telemetry/backend/src/Telemetria.Infraestructura/MemoriaCompartida/LectorAssettoCorsaWin32.cs)
+
+Se introdujeron filtros de validez física basados en el estado en vivo de la simulación:
+```csharp
+bool simuladorEnPistaVivo = grafica.Status == 2;
+bool enCarrilBoxesReal = simuladorEnPistaVivo && (grafica.IsInPitLane == 1 || (grafica.IsInPit == 1 && fisica.SpeedKmh > 3.0f));
+bool limitadorReal = simuladorEnPistaVivo && (fisica.PitLimiterOn == 1);
+```
+- `EstaEnBoxes` pasa a ser verdadero únicamente si el juego está en modo `AC_LIVE` (`Status == 2`) y el coche está efectivamente en el carril físico de pits (`IsInPitLane == 1`) o rodando activamente en la zona de garaje a velocidad de marcha.
+- `LimitadorBoxesActivo` solo se propaga como verdadero si el simulador está en vivo y el interruptor físico `PitLimiterOn` está activado.
+
+### B. Delta Circunscrito Estrictamente a la Sesión Activa
+
+Se eliminó cualquier referencia temporal externa o estimación empírica:
+```csharp
+int mejorTiempoFinalMs = _mejorTiempoSesionLocalMs > 0 ? _mejorTiempoSesionLocalMs : (grafica.IBestTime > 0 ? grafica.IBestTime : 0);
+int deltaInstantaneoMs = 0;
+if (Math.Abs(fisica.PerformanceMeter) > 0.0001f)
+{
+    deltaInstantaneoMs = (int)Math.Round(fisica.PerformanceMeter * 1000.0f);
+}
+else if (mejorTiempoFinalMs > 0 && grafica.ICurrentTime > 0)
+{
+    int tiempoEsperadoPosicionMs = (int)Math.Round(grafica.NormalizedCarPosition * mejorTiempoFinalMs);
+    deltaInstantaneoMs = grafica.ICurrentTime - tiempoEsperadoPosicionMs;
+}
+```
+Si el juego no dispone de una referencia válida en la sesión activa (ej. vuelta de instalación o primera vuelta sin cerrar), el delta reporta limpiamente `0`, sin inventar desvíos con respecto a sesiones pasadas.
+
+### C. Normalización Adaptativa de TC y ABS
+
+Se adaptó el lector para respetar tanto señales binarias puras (`1.0f`) como umbrales fraccionarios de intervención:
+```csharp
+float tcNivel = fisica.Tc > 0.001f
+    ? (fisica.Tc < 1.0f ? (float)Math.Clamp(Math.Round(fisica.Tc * 12.5f), 1, 12) : fisica.Tc)
+    : 0.0f;
+float absNivel = fisica.Abs > 0.001f
+    ? (fisica.Abs < 1.0f ? (float)Math.Clamp(Math.Round(fisica.Abs * 12.5f), 1, 12) : fisica.Abs)
+    : 0.0f;
+```
+
+---
+
+## 3. Modificaciones en el Frontend DDU (`apex-link-display`)
+
+### A. Detección Reactiva de Variación de Chasis en [`src/store/useTelemetryStore.ts`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/store/useTelemetryStore.ts)
+
+En la acción `updateTelemetry(frame)`:
+1. Se evalúa la discrepancia entre el valor entrante y el estado almacenado:
+   - Para el reparto de frenada: $\Delta \text{BrakeBias} \ge 0.2\%$.
+   - Para el control de tracción: $\text{TC}_{\text{nuevo}} \neq \text{TC}_{\text{previo}}$.
+   - Para los frenos antibloqueo: $\text{ABS}_{\text{nuevo}} \neq \text{ABS}_{\text{previo}}$.
+2. Al confirmarse la variación mientras el sistema se encuentra conectado a la telemetría viva, se invoca automáticamente `get().showTimedOverlay(...)`:
+   - **Brake Bias:** Overlay blanco con formato de precisión decimal (`53.0%`).
+   - **Traction Control:** Overlay cian con soporte para modo binario (`OFF` / `ON`) o numérico del dial (`1..12`).
+   - **ABS:** Overlay rosa alertando sobre el umbral configurado.
+3. El temporizador de 1000 ms se cancela y renueva ordenadamente ante pulsaciones consecutivas.
+
+### B. Descarte del Overlay de Boxes en Pausa en [`src/components/overlays/PitLimiterFullscreenOverlay.tsx`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/components/overlays/PitLimiterFullscreenOverlay.tsx)
+
+Se refinó la condición de despliegue visual:
+```typescript
+const shouldShow = pitLimiterActive || (isInPitLane && car.speedKmh > 2.0);
+if (!shouldShow) return null;
+```
+Garantizando que si el monoplaza se encuentra detenido en el menú de pausa, el overlay de pantalla completa se mantenga oculto, dejando despejada la interfaz principal.
+
+---
+
+## 4. Verificación Operativa en Vivo con Simulador Activo
+
+Con Assetto Corsa en ejecución en pista en el Autodromo Nazionale Monza, se corroboró mediante la sonda WebSocket a `ws://localhost:8080/ws/telemetry`:
+```json
+{
+  "lapTimeMs": 74661,
+  "lapTimeStr": "1:14:661",
+  "lastLapTimeMs": 92933,
+  "lastLapTimeStr": "1:32:933",
+  "bestTimeMs": 92933,
+  "bestTimeStr": "01:32.933",
+  "deltaMs": -73,
+  "currentLap": 3,
+  "sector": 3,
+  "lapProgress": 0.78499824
+}
+```
+1. **Delta Real de Sesión:** `deltaMs = -73` ($-0.073\text{ s}$ respecto a la mejor vuelta de la tanda activa $01:32.933$), proyectando la barra verde comparativa a la izquierda en `TopDeltaBar.tsx`.
+2. **Última Vuelta:** `lastLapTimeStr = "1:32:933"` exhibido nítidamente en la tarjeta superior `LAST` de `ZoneDTiming.tsx`.
+3. **Boxes en Pausa:** Al pausar el simulador, el overlay de pantalla completa de boxes se oculta de forma limpia y transparente.
+4. **Overlays en Vivo:** La alteración de Brake Bias desde el simulador activa el cartel informativo a pantalla completa por 1 segundo.
+5. **Compilación y Pruebas:** 51 pruebas unitarias superadas al 100% (20 en Infraestructura, 31 en Aplicación) y bundle de producción en Vite en 1.11 s.
+
+
+---
+
+# FASE 12: OPTIMIZACIÓN DE MACROSECTORES S1-S3 CON LIMPIEZA EN LÍNEA DE META, CALIBRACIÓN TÉRMICA DE NEUMÁTICOS, INDICADOR DE COMBUSTIBLE EN LITROS, FORMATO DE VELOCIDAD, CORRECCIÓN DEL EJE DE EMBRAGUE Y ESCALADO TIPOGRÁFICO INTEGRAL (35%)
+
+> **Objetivo de la Fase:** Refinar integralmente la experiencia visual y operativa del puesto de mando (Dashboard Display Unit - DDU) y consolidar la fidelidad del flujo de telemetría proveniente del simulador Assetto Corsa. Los requerimientos abordados comprenden:
+> 1. Sustitución de la hilera de 20 microsectores por la barra canónica de tres macrosectores de circuito (`S1`, `S2`, `S3`).
+> 2. Resolución de la anomalía cromática de sectores (donde aparecían en gris pese a que el juego marcaba récord de sector en rosa/púrpura).
+> 3. Implementación de la eliminación inmediata de los colores de sectores al cruzar la línea de meta, reiniciando la visualización para reflejar con precisión los tramos aún no recorridos en la nueva vuelta.
+> 4. Sincronización fidedigna y directa del mejor tiempo de vuelta de sesión (`bestTimeMs` / `bestTimeStr`) desde la memoria gráfica de Assetto Corsa.
+> 5. Sustitución del mapa motor (`MAP`) y de `TC CUT` por un indicador destacado de combustible restante (`FUEL`) en litros con un decimal (`XX.X L`).
+> 6. Formateo estricto del velocímetro a un solo decimal (`toFixed(1)`), eliminando el desbordamiento de 6 decimales de coma flotante.
+> 7. Inversión del eje del pedal de embrague (barra vertical azul) para reflejar correctamente 0% al liberar el pedal y 100% al accionarlo a fondo.
+> 8. Incorporación de un sistema de relleno térmico cromático para las cubiertas (azul frío <75°C, verde óptimo 75-105°C, naranja caliente 105-115°C y rojo sobrecalentado >=115°C), manteniendo el compuesto y añadiendo la presión en PSI.
+> 9. Incremento del 35% en el tamaño de las fuentes tipográficas en toda la interfaz para optimizar la legibilidad en pantallas montadas en volantes o cockpits de simulación.
+
+---
+
+## 1. Fundamentos Técnicos y Análisis de Causa Raíz
+
+### 1.1. Discrepancia Cromática y Máquina de Estados de los Macrosectores
+En fases precedentes, la evaluación de coloración de sectores dependía de un cálculo reactivo continuo frente al delta instantáneo (`deltaMs < -150`). Este enfoque generaba dos problemas críticos:
+1. **Volatilidad Retroactiva:** Si el piloto completaba un excelente Sector 1 en tiempo récord (púrpura/rosa), pero en el Sector 2 cometía un desliz que elevaba el delta por encima de cero, el Sector 1 cambiaba retroactivamente a amarillo o gris, perdiendo la fidelidad histórica del tramo completado.
+2. **Umbral Arbitrario Descalibrado:** La condición `deltaMs < -150` exigía una ventaja superior a 150 milisegundos para otorgar el color púrpura. En sesiones de clasificación o prácticas libres individuales, cualquier avance respecto a la mejor vuelta registrada de la sesión (`deltaMs <= 0`) constituye un récord de sector y debe plasmarse en rosa/púrpura (`purple`). Asimismo, los deltas positivos eran catalogados como `yellow`, cuya clase CSS en `SectorsBar.tsx` asignaba un fondo grisáceo (`bg-zinc-800 text-zinc-400`), provocando que sectores competitivos se percibieran visualmente apagados.
+
+### 1.2. Requerimiento de Limpieza de Sectores al Cruce de Meta
+En competiciones automovilísticas de monoplazas, el cruce de la línea de meta señala el comienzo de una nueva vuelta de cronometraje. Mantener los colores de los tres sectores de la vuelta anterior generaba ambigüedad en el piloto, quien no podía discernir si los sectores mostrados correspondían a la vuelta precedente o a la actual. La especificación exigió que al cruzar la meta, los tres sectores se limpien al instante:
+- **Sector 1:** Pasa inmediatamente al estado activo (`active`), destacándose con fondo blanco brillante pulsante y tipografía negra.
+- **Sector 2 y Sector 3:** Pasan inmediatamente al estado por recorrer (`upcoming`), con fondo negro y bordes atenuados, evidenciando de forma indudable que el vehículo aún no los ha transitado en la vuelta en curso.
+
+### 1.3. Inversión del Eje del Pedal de Embrague en la Física de Assetto Corsa
+En la estructura de memoria compartida `Local\\acpmf_physics`, el campo `fisica.Clutch` representa el acoplamiento del embrague en el tren motriz del vehículo:
+- Con el pedal completamente suelto (embrague totalmente acoplado): el simulador entrega `1.0f`.
+- Con el pedal pisado a fondo (embrague desacoplado): el simulador entrega `0.0f`.
+El frontend interpretaba directamente este valor como el porcentaje de accionamiento del pedal (`car.clutch * 100`), lo que provocaba que al tener los pies fuera de los pedales la barra azul se renderizara llena al 100%. La transformación matemática requerida para reflejar el recorrido físico del pedal es:
+$$\text{PorcentajePedalEmbrague} = (1.0 - \text{clutch}) \times 100$$
+
+### 1.4. Modelo Térmico de Cuatro Zonas y Presiones Manométricas
+El rendimiento y agarre de los neumáticos en monoplazas de alta carga aerodinámica está gobernado por la ventana operativa de temperatura de la banda de rodadura y el núcleo (`TyreCoreTemperature`):
+- **Zona Fría (< 75°C):** Baja adherencia, riesgo de bloqueo de frenada y subviraje. Representado con color azul (`#1E40AF` / borde `#3B82F6`).
+- **Zona Óptima (75°C a 105°C):** Ventana de máxima adherencia mecánica y degradación controlada. Representado con verde esmeralda (`#047857` / borde `#10B981`).
+- **Zona Caliente (105°C a 115°C):** Pérdida de agarre por blistering o derrape excesivo. Representado con naranja (`#C2410C` / borde `#F97316`).
+- **Zona de Sobrecalentamiento (>= 115°C):** Degradación térmica crítica. Representado con rojo de alerta (`#B91C1C` / borde `#EF4444`).
+Para complementar esta supervisión técnica sin saturar el espacio, se integró la presión en libras por pulgada cuadrada (`pressurePsi.toFixed(1)} PSI`) servida en tiempo real desde `fisica.WheelsPressure`.
+
+---
+
+## 2. Componentes Creados y Modificados
+
+### 2.1. Backend .NET (Infraestructura y Aplicación)
+
+#### A. Sincronización Directa de Mejor Vuelta en [`LectorAssettoCorsaWin32.cs`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link-telemetry/backend/src/Telemetria.Infraestructura/MemoriaCompartida/LectorAssettoCorsaWin32.cs)
+Se optimizó el método `ConstruirCuadroTelemetria` para sincronizar de manera preferente y autoritativa el mejor tiempo de vuelta informado por Assetto Corsa en su bloque gráfico:
+```csharp
+// Sincronización fidedigna con la mejor vuelta oficial de Assetto Corsa
+int mejorTiempoFinalMs = grafica.IBestTime > 0
+    ? grafica.IBestTime
+    : (_mejorTiempoSesionLocalMs > 0 ? _mejorTiempoSesionLocalMs : 0);
+
+string mejorTiempoFinalTexto = (grafica.IBestTime > 0 && textoMejorOficial != "--:--.---")
+    ? textoMejorOficial
+    : (_mejorTiempoSesionLocalMs > 0 ? _mejorTiempoSesionLocalTexto : "--:--.---");
+```
+Esto previene que una marca almacenada localmente en la memoria del Relay bloquee la recepción de un nuevo récord establecido o cargado por el simulador al iniciar la sesión.
+
+#### B. Inclusión de Última Vuelta en DTOs y Mapeadores
+- **[`DatosTiemposDto.cs`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link-telemetry/backend/src/Telemetria.Aplicacion/Dtos/Responses/DatosTiemposDto.cs):**
+  Se incorporaron las propiedades `lastLapTimeMs` (`UltimoTiempoVueltaMs`) y `lastLapTimeStr` (`UltimoTiempoVueltaTexto`) para exponer de manera directa el registro de la vuelta previa completada.
+- **[`MapeadorTelemetria.cs`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link-telemetry/backend/src/Telemetria.Aplicacion/Mappings/MapeadorTelemetria.cs):**
+  Se normalizó la asignación para asegurar que cadenas vacías o con el formato no deseado `"-:--:---"` se mapeen de forma consistente como `"--:--.---"`.
+
+---
+
+### 2.2. Frontend DDU (`apex-link-display`)
+
+#### A. Barra Canónica de Tres Sectores en [`src/components/zones/SectorsBar.tsx`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/components/zones/SectorsBar.tsx)
+Se construyó el nuevo componente de ancho completo (1920px) ubicado en la base inferior del tablero:
+- Distribuye 3 bloques idénticos y prominentes (`SECTOR 1`, `SECTOR 2`, `SECTOR 3`) con tipografía monoespaciada en 19px, peso ultra-negro (`font-black`) y espaciado expandido (`tracking-widest`).
+- Aplica los estilos cromáticos normativos:
+  - `purple`: Fondo `bg-purple-600`, borde `border-purple-400`, sombra de resplandor `shadow-[0_0_18px_rgba(168,85,247,0.85)]`.
+  - `green`: Fondo `bg-emerald-500`, borde `border-emerald-300`, texto en negro.
+  - `yellow`: Fondo `bg-zinc-800`, borde `border-zinc-700`, texto apagado `text-zinc-400`.
+  - `active`: Fondo blanco `bg-zinc-100`, borde blanco brillante y animación de pulsación suave (`animate-pulse`).
+  - `upcoming`: Fondo negro sólido `bg-black` y borde tenue `border-zinc-900`.
+
+#### B. Máquina de Estados de Sectores y Limpieza en Meta en [`src/store/useTelemetryStore.ts`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/store/useTelemetryStore.ts)
+En la acción de despacho `updateTelemetry(frame)`:
+```typescript
+// Lógica Oficial de los 3 Sectores de Circuito (S1, S2, S3)
+let nextMacroSectors = [...state.macroSectors] as [MicrosectorStatus, MicrosectorStatus, MicrosectorStatus];
+
+// Al cruzar la línea de meta: ELIMINAR inmediatamente los colores de la vuelta anterior
+if (currentLap !== previousLap && currentLap > 0) {
+  nextMacroSectors = ['active', 'upcoming', 'upcoming'];
+} else {
+  if (sector === 1) {
+    nextMacroSectors[0] = 'active';
+    nextMacroSectors[1] = 'upcoming';
+    nextMacroSectors[2] = 'upcoming';
+  } else if (sector === 2) {
+    // Consolidar Sector 1 solo una vez y mantenerlo inmutable durante el resto de la vuelta
+    if (nextMacroSectors[0] === 'active' || nextMacroSectors[0] === 'upcoming') {
+      nextMacroSectors[0] = deltaMs <= 0 ? 'purple' : 'yellow';
+    }
+    nextMacroSectors[1] = 'active';
+    nextMacroSectors[2] = 'upcoming';
+  } else if (sector === 3) {
+    // Consolidar Sector 2 solo una vez y mantenerlo inmutable
+    if (nextMacroSectors[1] === 'active' || nextMacroSectors[1] === 'upcoming') {
+      nextMacroSectors[1] = deltaMs <= 0 ? 'purple' : 'yellow';
+    }
+    nextMacroSectors[2] = 'active';
+  }
+}
+```
+Esta lógica garantiza que la consolidación de cada sector ocurra exactamente una vez en la transición y permanezca fija durante toda la vuelta, restableciéndose inmediatamente a blanco/negro/negro en el instante en que el vehículo inicia el giro siguiente.
+
+#### C. Control de Chasis y Combustible Restante en [`src/components/zones/ZoneEChassisControls.tsx`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/components/zones/ZoneEChassisControls.tsx)
+- Se eliminaron definitivamente las cajas obsoletas de `MAP` (Engine Map) y `TC CUT`.
+- Se configuraron cuatro cuadrantes perfectamente simétricos:
+  1. **TC:** Control de tracción en tono cian fluorescente.
+  2. **FUEL:** Indicador de combustible en litros con precisión de un decimal (`${fuel.toFixed(1)} L`) y texto de apoyo `REMAINING`.
+  3. **ABS:** Nivel del sistema antibloqueo en tono coral suave.
+  4. **BIAS:** Porcentaje de balance de frenada delantero (`${bias.toFixed(1)}%`).
+- Se ampliaron las fuentes un 35%: etiquetas superiores en 22px y números principales en 65px.
+
+#### D. Velocímetro y Eje de Embrague en [`src/components/zones/ZoneCCentralColumn.tsx`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/components/zones/ZoneCCentralColumn.tsx)
+- **Velocidad con un solo decimal:** Se formateó mediante `car.speedKmh.toFixed(1)`, preservando la estética sobria sin saltos de dígitos.
+- **Inversión de pedal de embrague:** Se sustituyó el mapeo lineal anterior por:
+  ```typescript
+  const clutchPercent = Math.max(0, Math.min(100, (1.0 - (car.clutch ?? 0)) * 100));
+  ```
+- **Escalado tipográfico:** Marcha principal engranada aumentada a 255px (anteriormente 190px), velocidad a 104px (anteriormente 76px) e indicador DRS a 26px.
+
+#### E. Color Térmico en Cubiertas y Presiones PSI en [`src/components/zones/ZoneBTyresAndBrakes.tsx`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/components/zones/ZoneBTyresAndBrakes.tsx)
+- **Mapeo cromático de la silueta del neumático:**
+  ```typescript
+  const getThermalStyle = (tempC: number) => {
+    if (tempC < 75) {
+      return { fill: 'bg-blue-900/90 text-blue-100 border-blue-500', glow: 'shadow-[0_0_12px_rgba(59,130,246,0.5)]' };
+    }
+    if (tempC <= 105) {
+      return { fill: 'bg-emerald-800/90 text-emerald-100 border-emerald-400', glow: 'shadow-[0_0_14px_rgba(16,185,129,0.6)]' };
+    }
+    if (tempC <= 115) {
+      return { fill: 'bg-orange-800/90 text-orange-100 border-orange-400', glow: 'shadow-[0_0_14px_rgba(249,115,22,0.6)]' };
+    }
+    return { fill: 'bg-red-800/90 text-red-100 border-red-500', glow: 'shadow-[0_0_16px_rgba(239,68,68,0.7)] animate-pulse' };
+  };
+  ```
+- **Presión manométrica:** Se incorporó en cada tarjeta la lectura `${tyres.pressurePsi[i].toFixed(1)} PSI` junto al desgaste (`WEAR`) y la temperatura numérica (43px).
+
+---
+
+## 3. Verificación de Compilación y Ejecución de Pruebas
+
+### 3.1. Pruebas Unitarias Focalizadas en .NET
+Siguiendo las directrices del proyecto, se ejecutaron las pruebas focalizadas en los ensamblados modificados:
+- **Infraestructura (`Telemetria.Infraestructura.Tests`):**
+  - **Resultado:** 20 pruebas superadas con éxito (0 fallos, 0 omitidas).
+  - **Tiempo de ejecución:** 2.0 segundos.
+- **Aplicación (`Telemetria.Aplicacion.Tests`):**
+  - **Resultado:** 31 pruebas superadas con éxito (0 fallos, 0 omitidas).
+  - **Tiempo de ejecución:** 761 milisegundos.
+
+### 3.2. Compilación del Frontend (TypeScript y Vite)
+Se validó la integridad de tipos en `apex-link-display`:
+- `pnpm run build` completado con código 0 en 608 ms.
+- Cero errores de tipado en TypeScript.
+
+### 3.3. Comprobación de Telemetría Viva vía WebSocket
+Mediante el cliente de inspección se verificaron las tramas serializadas a 60 Hz emitidas por el backend conectado al simulador activo en pista (Monza, `rss_formula_rss_supreme_25`):
+```json
+{
+  "timing": {
+    "lapTimeMs": 79511,
+    "lapTimeStr": "1:19:511",
+    "lastLapTimeMs": 92971,
+    "lastLapTimeStr": "1:32:971",
+    "bestTimeMs": 92659,
+    "bestTimeStr": "1:32:659",
+    "deltaMs": 220,
+    "currentLap": 6,
+    "sector": 3,
+    "lapProgress": 0.8483502
+  },
+  "car": {
+    "speedKmh": 280.9032,
+    "clutch": 1,
+    "tc": 0,
+    "abs": 0,
+    "brakeBias": 53.0
+  },
+  "session": {
+    "fuel": 19.220165,
+    "tyreCompound": "Dry (D)"
+  }
+}
+```
+- El velocímetro proyecta `280.9 km/h` de manera nítida.
+- El combustible restante proyecta `19.2 L` en el nuevo panel de chasis.
+- La barra de embrague permanece en reposo (0%) cuando el pedal está suelto (`clutch = 1`).
+- Los tres sectores se limpian fielmente a blanco/negro/negro al cruzar la meta para comenzar la vuelta 7.
+
+
+---
+
+### 3.4. Actualización Crítica: Aislamiento del Mejor Tiempo de Sesión Activa y Despliegue de Overlay de Pit Limiter
+
+#### A. Diagnóstico y Causa Raíz de la Vuelta Histórica Residual (1:32:659)
+Se detectó que en el simulador Assetto Corsa, el campo de memoria compartida `grafica.IBestTime` y su correspondiente cadena `grafica.BestTime` no representan el mejor tiempo de la sesión activa en curso, sino el **récord histórico absoluto (fantasma/ghost lap)** guardado por el simulador en el perfil del usuario para esa combinación de circuito y vehículo desde sesiones anteriores (`92659 ms` = `01:32:659`).
+
+Al iniciar una nueva sesión o reiniciar la tanda:
+1. `LectorAssettoCorsaWin32` leía de forma incondicional `grafica.IBestTime > 0` y sobreescribía la variable local `_mejorTiempoSesionLocalMs` con `92659`.
+2. El frontend recibía dicho valor y, en su lógica de almacenamiento (`useTelemetryStore.ts`), ejecutaba la condición `if (frame.timing.bestTimeMs < currentBestMs)`, lo que impedía que una vuelta legítima de la sesión actual (por ejemplo, `01:33:195`) sustituyera al récord fantasma anterior por ser numéricamente superior.
+
+#### B. Solución Implementada para el Mejor Tiempo de Sesión
+1. **En [`LectorAssettoCorsaWin32.cs`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link-telemetry/backend/src/Telemetria.Infraestructura/MemoriaCompartida/LectorAssettoCorsaWin32.cs):**
+   - Se eliminó la inyección y lectura de `grafica.IBestTime`.
+   - `_mejorTiempoSesionLocalMs` se inicializa en `0` (`"--:--.---"`).
+   - Al detectar cambio de sesión (`cambioSesionOEstado`) o retroceso del contador de vueltas (`CompletedLaps < _ultimaVueltaConocida`), se resetea a cero de inmediato.
+   - Solo se actualiza cuando el vehículo completa físicamente una vuelta en la sesión actual (`CompletedLaps > _ultimaVueltaConocida`), adoptando `grafica.ILastTime` como nuevo récord de sesión si es la primera vuelta o si mejora el registro previo.
+   - El delta instantáneo solo se calcula frente a este tiempo si existe (`mejorTiempoFinalMs > 0`), permaneciendo en `0` si el piloto está en su primera vuelta de tanda.
+2. **En [`src/store/useTelemetryStore.ts`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/store/useTelemetryStore.ts):**
+   - Se adaptó `updateTelemetry` para responder de manera autoritativa al backend: si `currentLap` retrocede, se resetea `currentBestMs = 0` y `currentBestStr = '--:--.---'`.
+   - Se eliminó el rechazo de tiempos mayores que impedía actualizar la mejor vuelta de una nueva tanda.
+
+#### C. Causa Raíz y Corrección del Overlay de Limitador de Boxes (Pit Limiter)
+En [`src/components/overlays/FullscreenOverlayHost.tsx`](file:///C:/Users/Alejo%20Garlati/Documents/Facultad/FAPPE/apex-link/apex-link-display/src/components/overlays/FullscreenOverlayHost.tsx), el contenedor principal condicionaba la renderización de `PitLimiterFullscreenOverlay` de manera excluyente a la variable `isInPitLane`:
+```typescript
+// Lógica defectuosa anterior:
+if (!isInPitLane && !timedOverlay) return null;
+{isInPitLane ? <PitLimiterFullscreenOverlay /> : ...}
+```
+Si el piloto pulsaba el botón del limitador de boxes (físico en volante o virtual) mientras se encontraba en pista o en la aproximación al carril de boxes, `isInPitLane` era `false`, por lo que `FullscreenOverlayHost` abortaba la ejecución y retornaba `null`, imposibilitando la visualización del cartel `PIT LIMITER ON`.
+
+Se corrigió integralmente la condición:
+```typescript
+const showPitOverlay = pitLimiterActive || (isInPitLane && car.speedKmh > 2.0);
+if (!showPitOverlay && !timedOverlay) return null;
+
+return (
+  <div className="absolute inset-0 z-50 pointer-events-none">
+    {showPitOverlay ? (
+      <PitLimiterFullscreenOverlay />
+    ) : (
+      <>
+        <ChassisFullscreenOverlay />
+        <FastestLapFullscreenOverlay />
+      </>
+    )}
+  </div>
+);
+```
+Con esta corrección:
+1. Activar el limitador de velocidad en cualquier sector despliega inmediatamente el cartel a pantalla completa en cian (`PIT LIMITER ON`) con marcha y velocímetro comparativo (/ 80 km/h).
+2. Desactivarlo en el carril de boxes rodando a velocidad despliega la advertencia roja pulsante (`PIT LIMITER OFF`).
+3. En menús de pausa o con el coche detenido, el overlay permanece oculto.

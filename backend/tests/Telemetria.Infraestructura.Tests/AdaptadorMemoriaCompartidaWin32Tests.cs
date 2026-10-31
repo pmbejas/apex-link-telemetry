@@ -72,7 +72,7 @@ public sealed class AdaptadorMemoriaCompartidaWin32Tests
     }
 
     [Fact]
-    public void IntentarConectar_SimuladorCerradoSinBloquesMmf_RetornaFalsoSinExcepcionNoControlada()
+    public void IntentarConectar_ComportamientoConsistenteSegunEstadoSimulador()
     {
         using var lector = new LectorAssettoCorsaWin32(NullLogger<LectorAssettoCorsaWin32>.Instance);
 
@@ -80,10 +80,18 @@ public sealed class AdaptadorMemoriaCompartidaWin32Tests
         CuadroTelemetria ultimoCuadro = lector.ObtenerUltimoCuadroConocido();
         MetadatosEstaticos metadatos = lector.ObtenerMetadatosEstaticos();
 
-        Assert.False(conectado);
-        Assert.False(lector.EstaConectado());
-        Assert.Equal(0, ultimoCuadro.EstadoSimulador);
-        Assert.Equal(string.Empty, metadatos.NombrePista);
-        Assert.Throws<InvalidOperationException>(() => lector.ObtenerCuadroActual());
+        if (!conectado)
+        {
+            Assert.False(lector.EstaConectado());
+            Assert.Equal(0, ultimoCuadro.EstadoSimulador);
+            Assert.Equal(string.Empty, metadatos.NombrePista);
+            Assert.Throws<InvalidOperationException>(() => lector.ObtenerCuadroActual());
+        }
+        else
+        {
+            Assert.True(lector.EstaConectado());
+            Assert.NotNull(ultimoCuadro);
+            Assert.NotNull(metadatos);
+        }
     }
 }

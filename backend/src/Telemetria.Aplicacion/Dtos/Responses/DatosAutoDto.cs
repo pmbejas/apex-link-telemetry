@@ -22,6 +22,9 @@ public sealed class DatosAutoDto
     [JsonPropertyName("brake")]
     public float Freno { get; set; }
 
+    [JsonPropertyName("clutch")]
+    public float Embrague { get; set; }
+
     [JsonPropertyName("steer")]
     public float Direccion { get; set; }
 
@@ -30,4 +33,19 @@ public sealed class DatosAutoDto
 
     [JsonPropertyName("drsEnabled")]
     public bool DrsHabilitado { get; set; }
+
+    [JsonPropertyName("tc")]
+    public float ControlTraccion { get; set; }
+
+    [JsonPropertyName("abs")]
+    public float Abs { get; set; }
+
+    [JsonPropertyName("brakeBias")]
+    public float RepartoFrenada { get; set; }
+
+    [JsonPropertyName("pitLimiterOn")]
+    public bool LimitadorBoxesActivo { get; set; }
+
+    [JsonPropertyName("isInPitLane")]
+    public bool EstaEnBoxes { get; set; }
 }

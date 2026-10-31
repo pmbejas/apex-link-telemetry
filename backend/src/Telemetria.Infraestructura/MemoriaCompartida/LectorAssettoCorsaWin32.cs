@@ -36,6 +36,8 @@ public sealed class LectorAssettoCorsaWin32 : ILectorTelemetria
     private int _ultimoSectorConocido = 1;
     private bool _vueltaActualEsValida = true;
     private readonly int[] _tiemposSectoresVueltaMs = new int[3];
+    private int _mejorTiempoSesionLocalMs = 0;
+    private string _mejorTiempoSesionLocalTexto = "--:--.---";
 
     public LectorAssettoCorsaWin32(ILogger<LectorAssettoCorsaWin32> logger)
     {
@@ -244,6 +246,15 @@ public sealed class LectorAssettoCorsaWin32 : ILectorTelemetria
         _ultimoEstadoSimulador = grafica.Status;
         _ultimaSesionActiva = grafica.Session;
 
+        if (cambioSesionOEstado)
+        {
+            _mejorTiempoSesionLocalMs = 0;
+            _mejorTiempoSesionLocalTexto = "--:--.---";
+            Array.Clear(_tiemposSectoresVueltaMs, 0, _tiemposSectoresVueltaMs.Length);
+            _ultimaVueltaConocida = -1;
+            _ultimoSectorConocido = 1;
+        }
+
         if (_metadatosEstaticosCache == null || _metadatosEstaticosCache.LongitudPistaMetros <= 0.0f || cambioSesionOEstado)
         {
             _metadatosEstaticosCache = LeerMetadatosEstaticosInterno();
@@ -260,6 +271,8 @@ public sealed class LectorAssettoCorsaWin32 : ILectorTelemetria
         // 1. Detectar reinicio de sesión (el contador de vueltas retrocede)
         if (_ultimaVueltaConocida != -1 && grafica.CompletedLaps < _ultimaVueltaConocida)
         {
+            _mejorTiempoSesionLocalMs = 0;
+            _mejorTiempoSesionLocalTexto = "--:--.---";
             Array.Clear(_tiemposSectoresVueltaMs, 0, _tiemposSectoresVueltaMs.Length);
             _ultimoSectorConocido = sectorActualBase1;
             _vueltaActualEsValida = !fueraDePistaEnCuadro;
@@ -277,6 +290,16 @@ public sealed class LectorAssettoCorsaWin32 : ILectorTelemetria
 
             bool validezVueltaCerrada = _vueltaActualEsValida;
             int[] sectoresCerrados = (int[])_tiemposSectoresVueltaMs.Clone();
+
+            if (grafica.ILastTime > 0 && validezVueltaCerrada)
+            {
+                if (_mejorTiempoSesionLocalMs == 0 || grafica.ILastTime < _mejorTiempoSesionLocalMs)
+                {
+                    _mejorTiempoSesionLocalMs = grafica.ILastTime;
+                    var ts = TimeSpan.FromMilliseconds(_mejorTiempoSesionLocalMs);
+                    _mejorTiempoSesionLocalTexto = $"{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds:D3}";
+                }
+            }
 
             Array.Clear(_tiemposSectoresVueltaMs, 0, _tiemposSectoresVueltaMs.Length);
             _vueltaActualEsValida = !fueraDePistaEnCuadro;
@@ -335,20 +358,46 @@ public sealed class LectorAssettoCorsaWin32 : ILectorTelemetria
             ? _metadatosEstaticosCache.LongitudPistaMetros
             : 5793.0f;
 
-        int tiempoEsperadoPosicionMs = (int)Math.Round(grafica.NormalizedCarPosition * grafica.IBestTime);
-        int deltaInstantaneoMs = (grafica.IBestTime > 0 && grafica.ICurrentTime > 0)
-            ? (grafica.ICurrentTime - tiempoEsperadoPosicionMs)
-            : 0;
-
-        fixed (char* punteroActual = grafica.CurrentTime, punteroUltimo = grafica.LastTime, punteroMejor = grafica.BestTime)
+        fixed (char* punteroActual = grafica.CurrentTime, punteroUltimo = grafica.LastTime, punteroMejor = grafica.BestTime, punteroCompuesto = grafica.TyreCompound)
         {
+            string textoMejorOficial = UtilitariosInteroperabilidadAC.LeerTiempoTextoNormalizado(punteroMejor, 15, "--:--.---");
+            if (textoMejorOficial == "-:--:---") textoMejorOficial = "--:--.---";
+
+            // Sincronización fidedigna con la mejor vuelta oficial de la sesión activa
+            int mejorTiempoFinalMs = _mejorTiempoSesionLocalMs;
+            string mejorTiempoFinalTexto = _mejorTiempoSesionLocalMs > 0 ? _mejorTiempoSesionLocalTexto : "--:--.---";
+
+            int deltaInstantaneoMs = 0;
+            if (mejorTiempoFinalMs > 0 && grafica.ICurrentTime > 0)
+            {
+                int tiempoEsperadoPosicionMs = (int)Math.Round(grafica.NormalizedCarPosition * mejorTiempoFinalMs);
+                deltaInstantaneoMs = grafica.ICurrentTime - tiempoEsperadoPosicionMs;
+            }
+
+            float tcNivel = fisica.Tc > 0.001f
+                ? (fisica.Tc < 1.0f ? (float)Math.Clamp(Math.Round(fisica.Tc * 12.5f), 1, 12) : fisica.Tc)
+                : 0.0f;
+            float absNivel = fisica.Abs > 0.001f
+                ? (fisica.Abs < 1.0f ? (float)Math.Clamp(Math.Round(fisica.Abs * 12.5f), 1, 12) : fisica.Abs)
+                : 0.0f;
+
+            bool simuladorEnPistaVivo = grafica.Status == 2;
+            bool enCarrilBoxesReal = simuladorEnPistaVivo && (grafica.IsInPitLane == 1 || (grafica.IsInPit == 1 && fisica.SpeedKmh > 3.0f));
+            bool limitadorReal = simuladorEnPistaVivo && (fisica.PitLimiterOn == 1);
+
+            float repartoFrenadaPorcentaje = fisica.BrakeBias > 0.0f
+                ? (fisica.BrakeBias <= 1.0f ? fisica.BrakeBias * 100.0f : fisica.BrakeBias)
+                : 58.5f;
+            string compuestoTexto = UtilitariosInteroperabilidadAC.LeerCadenaFija(punteroCompuesto, 33).Trim();
+            string compuestoNormalizado = string.IsNullOrWhiteSpace(compuestoTexto) ? "SOFT" : compuestoTexto;
             return new CuadroTelemetria
             {
                 MarcaTemporalUnixMs = ahoraUnixMs,
                 EstadoSimulador = grafica.Status,
                 TipoSesion = grafica.Session,
                 EsSimulacionMock = false,
-                EstaEnBoxes = grafica.IsInPit == 1 || grafica.IsInPitLane == 1,
+                EstaEnBoxes = enCarrilBoxesReal,
+                LimitadorBoxesActivo = limitadorReal,
                 EsVueltaValida = esVueltaValida,
                 VelocidadKmh = fisica.SpeedKmh,
                 Rpms = fisica.Rpms,
@@ -356,18 +405,26 @@ public sealed class LectorAssettoCorsaWin32 : ILectorTelemetria
                 Marcha = UtilitariosInteroperabilidadAC.NormalizarMarcha(fisica.Gear),
                 Acelerador = fisica.Gas,
                 Freno = fisica.Brake,
+                Embrague = fisica.Clutch,
                 Direccion = Math.Clamp(fisica.SteerAngle, -1.0f, 1.0f),
                 DrsDisponible = fisica.DrsAvailable == 1,
                 DrsHabilitado = fisica.DrsEnabled == 1,
+                ControlTraccion = tcNivel,
+                Abs = absNivel,
+                RepartoFrenada = repartoFrenadaPorcentaje,
                 PresionNeumaticosPsi = new[] { fisica.WheelsPressure[0], fisica.WheelsPressure[1], fisica.WheelsPressure[2], fisica.WheelsPressure[3] },
                 TemperaturaNeumaticosC = new[] { fisica.TyreCoreTemperature[0], fisica.TyreCoreTemperature[1], fisica.TyreCoreTemperature[2], fisica.TyreCoreTemperature[3] },
                 DesgasteNeumaticos = new[] { fisica.TyreWear[0], fisica.TyreWear[1], fisica.TyreWear[2], fisica.TyreWear[3] },
+                TemperaturaFrenosC = new[] { fisica.BrakeTemp[0], fisica.BrakeTemp[1], fisica.BrakeTemp[2], fisica.BrakeTemp[3] },
+                CompuestoNeumatico = compuestoNormalizado,
+                CombustibleLitros = fisica.Fuel,
+                CapacidadCombustibleLitros = _metadatosEstaticosCache?.MaxCombustible > 0 ? _metadatosEstaticosCache.MaxCombustible : 105.0f,
                 TiempoVueltaActualMs = grafica.ICurrentTime,
                 TiempoVueltaActualTexto = UtilitariosInteroperabilidadAC.LeerTiempoTextoNormalizado(punteroActual, 15, "00:00.000"),
                 UltimoTiempoVueltaMs = grafica.ILastTime,
                 UltimoTiempoVueltaTexto = UtilitariosInteroperabilidadAC.LeerTiempoTextoNormalizado(punteroUltimo, 15, "00:00.000"),
-                MejorTiempoMs = grafica.IBestTime,
-                MejorTiempoTexto = UtilitariosInteroperabilidadAC.LeerTiempoTextoNormalizado(punteroMejor, 15, "--:--.---"),
+                MejorTiempoMs = mejorTiempoFinalMs,
+                MejorTiempoTexto = mejorTiempoFinalTexto,
                 DeltaMs = deltaInstantaneoMs,
                 VueltasCompletadas = grafica.CompletedLaps,
                 SectorActual = sectorActualBase1,
