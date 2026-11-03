@@ -1,5 +1,6 @@
 namespace Telemetria.Api.Controladores;
 
+using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -40,6 +41,19 @@ public sealed class EstadoController : ControllerBase
         bool estaConectado = _lectorTelemetria.EstaConectado();
         var metadatos = estaConectado ? _lectorTelemetria.ObtenerMetadatosEstaticos() : null;
 
+        bool usuarioAutenticado = User?.Identity?.IsAuthenticated == true;
+        string? nombreClaim = User?.FindFirst(ClaimTypes.Name)?.Value
+            ?? User?.FindFirst("nombre")?.Value
+            ?? User?.Identity?.Name;
+        string? aliasClaim = User?.FindFirst("alias")?.Value;
+
+        string nombrePiloto = usuarioAutenticado && !string.IsNullOrWhiteSpace(nombreClaim)
+            ? nombreClaim
+            : "Invitado";
+        string aliasPiloto = usuarioAutenticado && !string.IsNullOrWhiteSpace(aliasClaim)
+            ? aliasClaim
+            : (usuarioAutenticado && !string.IsNullOrWhiteSpace(nombreClaim) ? nombreClaim.ToUpperInvariant() : "INVITADO");
+
         var estadoDto = new EstadoServicioDto
         {
             EstaConectado = estaConectado,
@@ -47,7 +61,10 @@ public sealed class EstadoController : ControllerBase
             Circuito = metadatos?.NombrePista ?? "Desconocido / Esperando simulador",
             ModeloVehiculo = metadatos?.NombreAuto ?? "Desconocido",
             LongitudPistaMetros = metadatos?.LongitudPistaMetros ?? 0f,
-            AutosActivos = estaConectado ? _lectorTelemetria.ObtenerUltimoCuadroConocido().CantidadAutosActivos : 0
+            AutosActivos = estaConectado ? _lectorTelemetria.ObtenerUltimoCuadroConocido().CantidadAutosActivos : 0,
+            NombrePiloto = nombrePiloto,
+            AliasPiloto = aliasPiloto,
+            EsInvitado = !usuarioAutenticado || string.IsNullOrWhiteSpace(nombreClaim)
         };
 
         return Ok(RespuestaApi<EstadoServicioDto>.ConstruirExito(estadoDto));

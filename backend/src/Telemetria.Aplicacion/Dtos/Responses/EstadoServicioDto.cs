@@ -24,4 +24,13 @@ public class EstadoServicioDto
 
     [JsonPropertyName("activeCars")]
     public int AutosActivos { get; set; }
+
+    [JsonPropertyName("pilotName")]
+    public string NombrePiloto { get; set; } = "Invitado";
+
+    [JsonPropertyName("pilotAlias")]
+    public string AliasPiloto { get; set; } = "INVITADO";
+
+    [JsonPropertyName("isGuest")]
+    public bool EsInvitado { get; set; } = true;
 }
