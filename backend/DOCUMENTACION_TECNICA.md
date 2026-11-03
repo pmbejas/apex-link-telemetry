@@ -4254,14 +4254,36 @@ public class ComparativaVueltasDto
 // Archivo: src/Telemetria.Aplicacion/Dtos/Responses/EstadoServicioDto.cs
 namespace Telemetria.Aplicacion.Dtos.Responses;
 
+using System.Text.Json.Serialization;
+
 public class EstadoServicioDto
 {
+    [JsonPropertyName("isConnected")]
     public bool EstaConectado { get; set; }
+
+    [JsonPropertyName("isMockMode")]
     public bool ModoMock { get; set; }
+
+    [JsonPropertyName("circuit")]
     public string Circuito { get; set; } = string.Empty;
+
+    [JsonPropertyName("carModel")]
     public string ModeloVehiculo { get; set; } = string.Empty;
+
+    [JsonPropertyName("trackLengthMeters")]
     public float LongitudPistaMetros { get; set; }
+
+    [JsonPropertyName("activeCars")]
     public int AutosActivos { get; set; }
+
+    [JsonPropertyName("pilotName")]
+    public string NombrePiloto { get; set; } = "Invitado";
+
+    [JsonPropertyName("pilotAlias")]
+    public string AliasPiloto { get; set; } = "INVITADO";
+
+    [JsonPropertyName("isGuest")]
+    public bool EsInvitado { get; set; } = true;
 }
 ```
 
@@ -4727,6 +4749,19 @@ public sealed class EstadoController : ControllerBase
         bool estaConectado = _lectorTelemetria.EstaConectado();
         var metadatos = estaConectado ? _lectorTelemetria.ObtenerMetadatosEstaticos() : null;
 
+        bool usuarioAutenticado = User?.Identity?.IsAuthenticated == true;
+        string? nombreClaim = User?.FindFirst(ClaimTypes.Name)?.Value
+            ?? User?.FindFirst("nombre")?.Value
+            ?? User?.Identity?.Name;
+        string? aliasClaim = User?.FindFirst("alias")?.Value;
+
+        string nombrePiloto = usuarioAutenticado && !string.IsNullOrWhiteSpace(nombreClaim)
+            ? nombreClaim
+            : "Invitado";
+        string aliasPiloto = usuarioAutenticado && !string.IsNullOrWhiteSpace(aliasClaim)
+            ? aliasClaim
+            : (usuarioAutenticado && !string.IsNullOrWhiteSpace(nombreClaim) ? nombreClaim.ToUpperInvariant() : "INVITADO");
+
         var estadoDto = new EstadoServicioDto
         {
             EstaConectado = estaConectado,
@@ -4734,7 +4769,10 @@ public sealed class EstadoController : ControllerBase
             Circuito = metadatos?.NombrePista ?? "Desconocido / Esperando simulador",
             ModeloVehiculo = metadatos?.NombreAuto ?? "Desconocido",
             LongitudPistaMetros = metadatos?.LongitudPistaMetros ?? 0f,
-            AutosActivos = estaConectado ? _lectorTelemetria.ObtenerUltimoCuadroConocido().CantidadAutosActivos : 0
+            AutosActivos = estaConectado ? _lectorTelemetria.ObtenerUltimoCuadroConocido().CantidadAutosActivos : 0,
+            NombrePiloto = nombrePiloto,
+            AliasPiloto = aliasPiloto,
+            EsInvitado = !usuarioAutenticado || string.IsNullOrWhiteSpace(nombreClaim)
         };
 
         return Ok(RespuestaApi<EstadoServicioDto>.ConstruirExito(estadoDto));

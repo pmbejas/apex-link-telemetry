@@ -164,26 +164,34 @@ Si la petición falla, `exitoso` es `false`, `datos` es `null`, y `errores` cont
 
 ### B. Catálogo de Endpoints Analíticos
 
-#### 1. Estado General del Servicio y Circuito
+#### 1. Estado General del Servicio, Simulador y Perfil de Piloto
 * **Método:** `GET`
 * **Ruta:** `/api/estado`
-* **Propósito:** Conocer si el simulador está activo, el circuito cargado y su longitud métrica total.
+* **Propósito:** Conocer si el simulador está activo, el circuito cargado, su longitud métrica total y el perfil del piloto activo (extraído de claims de autenticación o "Invitado" por defecto).
 * **Respuesta (`EstadoServicioDto`):**
 ```json
 {
   "exitoso": true,
   "mensaje": "Operación completada satisfactoriamente",
   "datos": {
-    "estaConectado": true,
-    "modoMock": false,
-    "circuito": "monza",
-    "modeloVehiculo": "ks_ferrari_sf70h",
-    "longitudPistaMetros": 5793.0,
-    "autosActivos": 1
+    "isConnected": true,
+    "isMockMode": false,
+    "circuit": "monza",
+    "carModel": "ks_ferrari_sf70h",
+    "trackLengthMeters": 5793.0,
+    "activeCars": 1,
+    "pilotName": "Alejo Garlati",
+    "pilotAlias": "GARLATI",
+    "isGuest": false
   },
   "errores": []
 }
 ```
+
+> **Campos de perfil de piloto:**
+> - `pilotName`: Nombre completo del usuario autenticado o `"Invitado"`.
+> - `pilotAlias`: Alias en mayúsculas para display de cabina o `"INVITADO"`.
+> - `isGuest`: `true` si la solicitud no cuenta con sesión autenticada o carece de claims de identidad.
 
 ---
 

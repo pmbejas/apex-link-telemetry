@@ -210,7 +210,10 @@ Permite saber si el simulador está conectado, si se está usando el generador d
     "circuit": "monza",
     "carModel": "ks_ferrari_sf70h",
     "trackLengthMeters": 5793.0,
-    "activeCars": 1
+    "activeCars": 1,
+    "pilotName": "Alejo Garlati",
+    "pilotAlias": "GARLATI",
+    "isGuest": false
   },
   "mensaje": "Operación completada satisfactoriamente",
   "exitoso": true,
@@ -550,6 +553,9 @@ export interface EstadoServicioDto {
   carModel: string;
   trackLengthMeters: number;
   activeCars: number;
+  pilotName: string;
+  pilotAlias: string;
+  isGuest: boolean;
 }
 
 export interface EstadoMockDto {
