@@ -10,6 +10,12 @@ public sealed class DatosTiemposDto
     [JsonPropertyName("lapTimeStr")]
     public string TiempoVueltaTexto { get; set; } = "00:00.000";
 
+    [JsonPropertyName("lastLapTimeMs")]
+    public int UltimoTiempoVueltaMs { get; set; }
+
+    [JsonPropertyName("lastLapTimeStr")]
+    public string UltimoTiempoVueltaTexto { get; set; } = "--:--.---";
+
     [JsonPropertyName("bestTimeMs")]
     public int MejorTiempoMs { get; set; }
 

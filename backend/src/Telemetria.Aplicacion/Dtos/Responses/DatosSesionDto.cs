@@ -15,4 +15,13 @@ public sealed class DatosSesionDto
 
     [JsonPropertyName("carModel")]
     public string ModeloAuto { get; set; } = string.Empty;
+
+    [JsonPropertyName("fuel")]
+    public float CombustibleLitros { get; set; }
+
+    [JsonPropertyName("maxFuel")]
+    public float CapacidadCombustibleLitros { get; set; }
+
+    [JsonPropertyName("tyreCompound")]
+    public string CompuestoNeumatico { get; set; } = "SOFT";
 }

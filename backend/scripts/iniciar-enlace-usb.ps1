@@ -3,7 +3,7 @@
     Automatiza la configuración del túnel USB de ultra baja latencia para el display del volante.
 .DESCRIPTION
     Verifica la disponibilidad de ADB en el sistema, comprueba la conexión y autorización RSA
-    del teléfono Android, ejecuta el reenvío de puertos mediante adb reverse (:8080 y :3000)
+    del teléfono Android, ejecuta el reenvío de puertos mediante adb reverse (:8080 y :5173)
     y supervisa la reconexión física del cable sin reinyecciones redundantes.
 #>
 
