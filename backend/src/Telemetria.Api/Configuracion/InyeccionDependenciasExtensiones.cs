@@ -48,6 +48,8 @@ public static class InyeccionDependenciasExtensiones
         servicios.AddScoped<IRepositorioSesionesLocal, RepositorioSesionesSqlite>();
         servicios.AddScoped<IRepositorioVueltasLocal, RepositorioVueltasSqlite>();
         servicios.AddScoped<IServicioAnalisisTelemetria, ServicioAnalisisTelemetria>();
+        servicios.AddScoped<IRepositorioPerfilesPiloto, RepositorioPerfilesPostgreSql>();
+        servicios.AddSingleton<IMotorEvaluacionPiloto, MotorEvaluacionPiloto>();
         servicios.AddValidatorsFromAssemblyContaining<AlternarModoMockRequestValidator>();
 
         return servicios;
