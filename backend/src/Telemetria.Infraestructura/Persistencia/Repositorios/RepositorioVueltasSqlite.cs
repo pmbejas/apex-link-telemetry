@@ -171,4 +171,27 @@ public sealed class RepositorioVueltasSqlite : IRepositorioVueltasLocal
             throw;
         }
     }
+
+    public async Task<List<Vuelta>> ObtenerMejoresVueltasPorCircuitoAsync(string circuito, int limite, CancellationToken tokenCancelacion = default)
+    {
+        try
+        {
+            string circuitoNormalizado = (circuito ?? "monza").Trim().ToLowerInvariant();
+            return await _contexto.Vueltas
+                .AsNoTracking()
+                .Include(vuelta => vuelta.Sesion)
+                .Where(vuelta => vuelta.Sesion != null &&
+                                 vuelta.Sesion.Circuito.ToLower().Contains(circuitoNormalizado) &&
+                                 vuelta.EsValida &&
+                                 vuelta.TiempoVueltaMs > 0)
+                .OrderBy(vuelta => vuelta.TiempoVueltaMs)
+                .Take(Math.Max(1, limite))
+                .ToListAsync(tokenCancelacion);
+        }
+        catch (Exception excepcion)
+        {
+            _logger.LogError(excepcion, "Error al obtener el ranking de mejores vueltas para el circuito {Circuito}.", circuito);
+            throw;
+        }
+    }
 }

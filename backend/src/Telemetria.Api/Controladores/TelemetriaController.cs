@@ -104,4 +104,16 @@ public sealed class TelemetriaController : ControllerBase
 
         return Ok(RespuestaApi<ComparativaVueltasDto>.ConstruirExito(resultadoComparativa));
     }
+
+    [HttpGet("leaderboard")]
+    [HasPermission("sesion:listar")]
+    [ProducesResponseType(typeof(RespuestaApi<List<LeaderboardItemDto>>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<RespuestaApi<List<LeaderboardItemDto>>>> ObtenerLeaderboard(
+        [FromQuery] string? circuito = "monza",
+        [FromQuery] int limite = 10,
+        CancellationToken tokenCancelacion = default)
+    {
+        var ranking = await _servicioAnalisis.ObtenerLeaderboardAsync(circuito, limite, tokenCancelacion);
+        return Ok(RespuestaApi<List<LeaderboardItemDto>>.ConstruirExito(ranking));
+    }
 }

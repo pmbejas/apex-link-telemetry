@@ -29,4 +29,9 @@ public interface IServicioAnalisisTelemetria
         Guid vueltaBaseId,
         Guid vueltaComparadaId,
         CancellationToken tokenCancelacion = default);
+
+    Task<List<LeaderboardItemDto>> ObtenerLeaderboardAsync(
+        string? circuito,
+        int limite = 10,
+        CancellationToken tokenCancelacion = default);
 }

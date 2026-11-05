@@ -17,4 +17,6 @@ public interface IRepositorioVueltasLocal
     Task<List<MuestraTelemetria>> ObtenerTelemetriaVueltaAsync(Guid vueltaId, CancellationToken tokenCancelacion = default);
 
     Task<Vuelta?> ObtenerMejorVueltaAsync(string circuito, CancellationToken tokenCancelacion = default);
+
+    Task<List<Vuelta>> ObtenerMejoresVueltasPorCircuitoAsync(string circuito, int limite, CancellationToken tokenCancelacion = default);
 }
