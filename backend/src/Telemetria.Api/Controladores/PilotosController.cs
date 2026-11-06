@@ -65,8 +65,8 @@ public sealed class PilotosController : ControllerBase
         Guid usuarioId,
         CancellationToken token)
     {
-        var sesiones = await _repositorioSesiones.ObtenerHistorialSesionesAsync(1, 100, usuarioId, token);
         bool esAdmin = usuarioId.ToString().StartsWith("00000000");
+        var sesiones = await _repositorioSesiones.ObtenerHistorialSesionesAsync(1, 100, esAdmin ? null : usuarioId, token);
 
         var sesionesValidas = sesiones
             .Where(s => !s.EsSimulacionMock && s.TotalVueltas > 0)
