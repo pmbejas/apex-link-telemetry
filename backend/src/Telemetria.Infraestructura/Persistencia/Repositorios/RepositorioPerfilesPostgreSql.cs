@@ -156,6 +156,22 @@ public sealed class RepositorioPerfilesPostgreSql : IRepositorioPerfilesPiloto
                 }
             }
 
+            bool esCuentaSemilla = usuarioId.ToString().StartsWith("00000000") ||
+                                   usuarioId.ToString().StartsWith("11111111") ||
+                                   usuarioId.ToString().StartsWith("22222222");
+
+            if (!esCuentaSemilla)
+            {
+                return perfilDto with
+                {
+                    PorcentajeVueltasValidas = 0f,
+                    VelocidadMaximaKmh = 0f,
+                    UltimaEvaluacion = evaluacion,
+                    Records = new List<RecordCircuitoPilotoDto>(),
+                    Logros = listaLogros
+                };
+            }
+
             var fallback = ObtenerFallbackPiloto(usuarioId);
             var evalFinal = evaluacion ?? fallback.UltimaEvaluacion;
             float puntajeFinal = perfilDto.PuntajeGeneral;

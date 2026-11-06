@@ -57,4 +57,48 @@ public sealed class AuthController : ControllerBase
             resultado,
             "Autenticación exitosa en servidor de boxes."));
     }
+
+    [HttpPost("registro")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(RespuestaApi<LoginRespuestaDto>), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Registro(
+        [FromBody] RegistroUsuarioRequest solicitud,
+        CancellationToken tokenCancelacion)
+    {
+        if (solicitud == null ||
+            string.IsNullOrWhiteSpace(solicitud.Nombre) ||
+            string.IsNullOrWhiteSpace(solicitud.Alias) ||
+            string.IsNullOrWhiteSpace(solicitud.Email) ||
+            string.IsNullOrWhiteSpace(solicitud.Password))
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Status = StatusCodes.Status400BadRequest,
+                Title = "Datos de registro incompletos",
+                Detail = "Debés completar nombre completo, alias, correo electrónico y contraseña."
+            });
+        }
+
+        var (resultado, error) = await _autenticador.RegistrarAsync(solicitud, tokenCancelacion);
+        if (resultado == null)
+        {
+            bool esConflicto = error != null && (error.Contains("existe") || error.Contains("en uso"));
+            int statusCode = esConflicto ? StatusCodes.Status409Conflict : StatusCodes.Status400BadRequest;
+
+            return StatusCode(statusCode, new ProblemDetails
+            {
+                Status = statusCode,
+                Title = esConflicto ? "Piloto ya registrado" : "No se pudo completar el registro",
+                Detail = error ?? "Verificá los datos ingresados e intentá nuevamente."
+            });
+        }
+
+        return StatusCode(
+            StatusCodes.Status201Created,
+            RespuestaApi<LoginRespuestaDto>.ConstruirExito(
+                resultado,
+                "Piloto registrado y autenticado exitosamente en boxes."));
+    }
 }

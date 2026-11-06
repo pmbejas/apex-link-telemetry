@@ -10,4 +10,8 @@ public interface IAutenticadorUsuarios
     Task<LoginRespuestaDto?> AutenticarAsync(
         LoginRequest solicitud,
         CancellationToken token = default);
+
+    Task<(LoginRespuestaDto? Resultado, string? Error)> RegistrarAsync(
+        RegistroUsuarioRequest solicitud,
+        CancellationToken token = default);
 }
