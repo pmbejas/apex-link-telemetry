@@ -32,6 +32,8 @@ public interface IRepositorioSesionesLocal
 
     Task AsignarUsuarioASesionesSinPilotoAsync(Guid usuarioId, CancellationToken tokenCancelacion = default);
 
+    Task CerrarSesionesAbiertasAsync(CancellationToken tokenCancelacion = default);
+
     Task<List<Sesion>> ObtenerSesionesPendientesSincronizacionAsync(CancellationToken tokenCancelacion = default);
 
     Task MarcarComoSincronizadaAsync(Guid sesionId, CancellationToken tokenCancelacion = default);

@@ -220,6 +220,45 @@ public sealed class RepositorioSesionesSqlite : IRepositorioSesionesLocal
         }
     }
 
+    public async Task CerrarSesionesAbiertasAsync(CancellationToken tokenCancelacion = default)
+    {
+        try
+        {
+            var sesionesAbiertas = await _contexto.Sesiones
+                .Include(entidad => entidad.Vueltas)
+                .Where(entidad => entidad.FechaFin == null)
+                .ToListAsync(tokenCancelacion);
+
+            if (sesionesAbiertas.Count == 0)
+            {
+                return;
+            }
+
+            var ahora = DateTimeOffset.UtcNow;
+            foreach (var sesion in sesionesAbiertas)
+            {
+                sesion.FechaFin = ahora;
+                sesion.TotalVueltas = sesion.Vueltas.Count;
+
+                var vueltasValidas = sesion.Vueltas
+                    .Where(vuelta => vuelta.EsValida && vuelta.TiempoVueltaMs > 0)
+                    .ToList();
+
+                sesion.MejorTiempoMs = vueltasValidas.Count > 0
+                    ? vueltasValidas.Min(vuelta => vuelta.TiempoVueltaMs)
+                    : 0;
+            }
+
+            await _contexto.SaveChangesAsync(tokenCancelacion);
+            _logger.LogInformation("Consolidadas y cerradas {Cantidad} sesiones que habían quedado abiertas en SQLite.", sesionesAbiertas.Count);
+        }
+        catch (Exception excepcion)
+        {
+            _logger.LogError(excepcion, "Error al consolidar sesiones abiertas en SQLite.");
+            throw;
+        }
+    }
+
     public async Task<List<Sesion>> ObtenerSesionesPendientesSincronizacionAsync(CancellationToken tokenCancelacion = default)
     {
         try

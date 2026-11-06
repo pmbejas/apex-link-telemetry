@@ -57,6 +57,20 @@ public sealed class ServicioGestionVueltas : BackgroundService, IControlPilotoAc
 
         try
         {
+            using var alcanceInicial = _factoriaAlcances.CreateScope();
+            var repositorioSesiones = alcanceInicial.ServiceProvider.GetService<IRepositorioSesionesLocal>();
+            if (repositorioSesiones != null)
+            {
+                await repositorioSesiones.CerrarSesionesAbiertasAsync(tokenDetencion);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "No se pudieron consolidar las sesiones abiertas previas al iniciar el servicio.");
+        }
+
+        try
+        {
             await foreach (CuadroTelemetria cuadro in _canalLector.ReadAllAsync(tokenDetencion))
             {
                 await ProcesarCuadroTelemetriaAsync(cuadro, tokenDetencion);

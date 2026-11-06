@@ -28,6 +28,7 @@ public sealed class ServicioTelemetriaRelay : BackgroundService
     private readonly TimeSpan _intervaloReconexion;
 
     private long _ultimaVersionConmutacion = -1;
+    private bool _estabaConectado = false;
     private int _ultimaVueltaRegistrada = -1;
     private int _mejorTiempoSesionMs = 0;
     private int _muestrasAcumuladasVuelta = 0;
@@ -72,10 +73,18 @@ public sealed class ServicioTelemetriaRelay : BackgroundService
 
                 if (!_lectorTelemetria.EstaConectado() && !_lectorTelemetria.IntentarConectar())
                 {
+                    if (_estabaConectado || _ultimaVueltaRegistrada != -1)
+                    {
+                        _estabaConectado = false;
+                        ReiniciarEstadoSeguimientoSesion(-1, string.Empty, string.Empty, -1, 0);
+                        _canalPersistencia?.TryWrite(new CuadroTelemetria { EstadoSimulador = 0 });
+                    }
+
                     await Task.Delay(_intervaloReconexion, tokenDetencion);
                     continue;
                 }
 
+                _estabaConectado = true;
                 CuadroTelemetria cuadroActual = _lectorTelemetria.ObtenerCuadroActual();
                 cuadroActual = await ProcesarTransicionDeVueltaAsync(cuadroActual, tokenDetencion);
 
@@ -132,8 +141,14 @@ public sealed class ServicioTelemetriaRelay : BackgroundService
             return;
         }
 
+        bool esConmutacionEnCaliente = _ultimaVersionConmutacion != -1;
         _ultimaVersionConmutacion = _controlModo.VersionConmutacion;
         ReiniciarEstadoSeguimientoSesion(-1, string.Empty, string.Empty, -1, 0);
+
+        if (esConmutacionEnCaliente)
+        {
+            _canalPersistencia?.TryWrite(new CuadroTelemetria { EstadoSimulador = 0 });
+        }
     }
 
     private void ActualizarPeriodoSiCorresponde(
