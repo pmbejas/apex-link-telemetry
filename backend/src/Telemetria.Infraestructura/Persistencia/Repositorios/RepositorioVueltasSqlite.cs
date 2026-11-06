@@ -181,11 +181,12 @@ public sealed class RepositorioVueltasSqlite : IRepositorioVueltasLocal
                 .AsNoTracking()
                 .Include(vuelta => vuelta.Sesion)
                 .Where(vuelta => vuelta.Sesion != null &&
+                                 !vuelta.Sesion.EsSimulacionMock &&
                                  vuelta.Sesion.Circuito.ToLower().Contains(circuitoNormalizado) &&
                                  vuelta.EsValida &&
                                  vuelta.TiempoVueltaMs > 0)
                 .OrderBy(vuelta => vuelta.TiempoVueltaMs)
-                .Take(Math.Max(1, limite))
+                .Take(Math.Max(1, limite * 5))
                 .ToListAsync(tokenCancelacion);
         }
         catch (Exception excepcion)

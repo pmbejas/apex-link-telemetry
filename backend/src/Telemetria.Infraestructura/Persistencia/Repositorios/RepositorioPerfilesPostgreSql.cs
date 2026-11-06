@@ -156,10 +156,32 @@ public sealed class RepositorioPerfilesPostgreSql : IRepositorioPerfilesPiloto
                 }
             }
 
+            var fallback = ObtenerFallbackPiloto(usuarioId);
+            var evalFinal = evaluacion ?? fallback.UltimaEvaluacion;
+            float puntajeFinal = perfilDto.PuntajeGeneral;
+            if (Math.Abs(puntajeFinal - 75.0f) < 0.05f && evalFinal != null)
+            {
+                puntajeFinal = (float)Math.Round(
+                    (evalFinal.Frenada + evalFinal.TraccionSalida + evalFinal.VelocidadApice + evalFinal.Consistencia + evalFinal.RespetoLimites) / 5.0f,
+                    1);
+            }
+
             return perfilDto with
             {
-                UltimaEvaluacion = evaluacion,
-                Logros = listaLogros
+                VehiculoPrincipal = string.IsNullOrWhiteSpace(perfilDto.VehiculoPrincipal) || perfilDto.VehiculoPrincipal == "Ferrari SF70H"
+                    ? fallback.VehiculoPrincipal
+                    : perfilDto.VehiculoPrincipal,
+                PaceRating = perfilDto.PaceRating == 1500 ? fallback.PaceRating : perfilDto.PaceRating,
+                SafetyRating = perfilDto.PaceRating == 1500 ? fallback.SafetyRating : perfilDto.SafetyRating,
+                Nivel = perfilDto.Nivel == "Semi-Pro" ? fallback.Nivel : perfilDto.Nivel,
+                PuntajeGeneral = puntajeFinal,
+                VueltasTotales = perfilDto.VueltasTotales > 0 ? perfilDto.VueltasTotales : fallback.VueltasTotales,
+                KilometrosTotales = perfilDto.KilometrosTotales > 0 ? perfilDto.KilometrosTotales : fallback.KilometrosTotales,
+                PorcentajeVueltasValidas = fallback.PorcentajeVueltasValidas,
+                VelocidadMaximaKmh = fallback.VelocidadMaximaKmh,
+                UltimaEvaluacion = evalFinal,
+                Records = fallback.Records,
+                Logros = listaLogros.Count > 0 ? listaLogros : fallback.Logros
             };
         }
         catch (Exception ex)
@@ -284,32 +306,47 @@ public sealed class RepositorioPerfilesPostgreSql : IRepositorioPerfilesPiloto
                 Alias = "ADMIN",
                 Email = "admin@apexlink.io",
                 Licencia = "Licencia FIA Master Admin",
-                Nacionalidad = "International",
-                CodigoPais = "INT",
-                VehiculoPrincipal = "Ferrari SF70H / Pitwall Control",
+                Nacionalidad = "Argentina",
+                CodigoPais = "ARG",
+                VehiculoPrincipal = "Formula RSS Supreme 2025",
                 SimuladorPrincipal = "Assetto Corsa · Shared Memory Win32 MMF & Mock",
-                PaceRating = 9999,
-                SafetyRating = "S+",
-                Nivel = "Administrador Maestro",
-                PuntajeGeneral = 100.0f,
-                VueltasTotales = 1000,
-                KilometrosTotales = 5000.0f,
+                PaceRating = 2650,
+                SafetyRating = "S",
+                Nivel = "Director de Carrera",
+                PuntajeGeneral = 90.2f,
+                VueltasTotales = 12,
+                KilometrosTotales = 69.5f,
+                PorcentajeVueltasValidas = 91.7f,
+                VelocidadMaximaKmh = 312.4f,
                 UltimaEvaluacion = new EvaluacionRendimientoDto
                 {
                     UsuarioId = usuarioId,
-                    Velocidad = 99,
-                    Consistencia = 99,
-                    Frenada = 99,
-                    Control = 99,
-                    Agresividad = 99,
-                    TrailBraking = 99,
-                    TraccionSalida = 99,
-                    VelocidadApice = 99,
-                    RespetoLimites = 100,
+                    Velocidad = 90,
+                    Consistencia = 92,
+                    Frenada = 88,
+                    Control = 91,
+                    Agresividad = 84,
+                    TrailBraking = 88,
+                    TraccionSalida = 90,
+                    VelocidadApice = 89,
+                    RespetoLimites = 92,
+                    ConsejoFrenada = "Excelente modulación de presión inicial y descompresión progresiva hacia el vértice.",
+                    ConsejoTraccion = "Apertura limpia del acelerador a la salida de chicanas lentas.",
+                    ConsejoApice = "Buen paso por curva manteniendo carga aerodinámica estable.",
+                    ConsejoConsistencia = "Ritmo de referencia consistente entre giros consecutivos.",
+                    ConsejoLimites = "Respeto reglamentario de pianos y límites de pista.",
                     PuntoFuerteTitulo = "Supervisión Global de Telemetría",
-                    PuntoFuerteDesc = "Acceso irrestricto a generador mock sintético y auditoría de telemetría a 60 Hz.",
+                    PuntoFuerteDesc = "Control integral del sistema de adquisición de telemetría a 60 Hz y validación de tandas.",
                     OportunidadMejoraTitulo = "Monitoreo en Tiempo Real",
                     OportunidadMejoraDesc = "Supervisar telemetría de pilotos federados en pista."
+                },
+                Records = new List<RecordCircuitoPilotoDto>
+                {
+                    new() { Id = "monza", Circuito = "Autodromo Nazionale Monza", Pais = "ITA", Tiempo = "01:23.450", EsRecordSesion = true }
+                },
+                Logros = new List<LogroPilotoDto>
+                {
+                    new() { Id = "admin-master", Titulo = "Director de Carrera", Descripcion = "Acceso concedido al panel maestro de telemetría y generador sintético.", Icono = "shield-check", Desbloqueado = true, FechaDesbloqueo = "2026-11-05" }
                 }
             };
         }
@@ -331,9 +368,11 @@ public sealed class RepositorioPerfilesPostgreSql : IRepositorioPerfilesPiloto
                 PaceRating = 1950,
                 SafetyRating = "A",
                 Nivel = "Pro-Am GT3",
-                PuntajeGeneral = 78.5f,
+                PuntajeGeneral = 83.6f,
                 VueltasTotales = 20,
-                KilometrosTotales = 130.4f,
+                KilometrosTotales = 115.9f,
+                PorcentajeVueltasValidas = 90.0f,
+                VelocidadMaximaKmh = 278.4f,
                 UltimaEvaluacion = new EvaluacionRendimientoDto
                 {
                     UsuarioId = usuarioId,
@@ -346,10 +385,25 @@ public sealed class RepositorioPerfilesPostgreSql : IRepositorioPerfilesPiloto
                     TraccionSalida = 91,
                     VelocidadApice = 74,
                     RespetoLimites = 88,
+                    ConsejoFrenada = "Soltá el freno de forma más lineal en los últimos 30 m antes del ápice para evitar subviraje.",
+                    ConsejoTraccion = "Es tu mayor fortaleza en GT3. Apertura progresiva y limpia al salir de curvas medias.",
+                    ConsejoApice = "Frená 5 metros antes en curvas lentas para asegurar mayor rotación en el vértice.",
+                    ConsejoConsistencia = "Ritmo muy constante y predecible para stints de resistencia GT.",
+                    ConsejoLimites = "Buen respeto de pianos. Cuidado con la salida de Variante Ascari.",
                     PuntoFuerteTitulo = "Tracción en Salida de Curva (Variante Roggia)",
                     PuntoFuerteDesc = "Apertura progresiva y limpia del acelerador al salir de curvas de media velocidad.",
                     OportunidadMejoraTitulo = "Transición de Freno a Ápice (Trail-Braking)",
                     OportunidadMejoraDesc = "Liberación del pedal de freno algo abrupta en los últimos 25 metros antes del vértice."
+                },
+                Records = new List<RecordCircuitoPilotoDto>
+                {
+                    new() { Id = "monza", Circuito = "Autodromo Nazionale Monza", Pais = "ITA", Tiempo = "01:47.382", EsRecordSesion = true },
+                    new() { Id = "spa", Circuito = "Circuit de Spa-Francorchamps", Pais = "BEL", Tiempo = "02:18.420", EsRecordSesion = true }
+                },
+                Logros = new List<LogroPilotoDto>
+                {
+                    new() { Id = "freno-precision", Titulo = "Freno de Precisión", Descripcion = "Trail braking controlado en chicanas.", Icono = "disc", Desbloqueado = true, FechaDesbloqueo = "2026-10-29" },
+                    new() { Id = "fappe-showcase", Titulo = "Piloto Oficial ApexLink", Descripcion = "Conducción en pista con telemetría de boxes activa.", Icono = "award", Desbloqueado = true, FechaDesbloqueo = "2026-10-31" }
                 }
             };
         }
@@ -363,14 +417,16 @@ public sealed class RepositorioPerfilesPostgreSql : IRepositorioPerfilesPiloto
             Licencia = "Licencia Apex F1 Alien",
             Nacionalidad = "Argentina",
             CodigoPais = "ARG",
-            VehiculoPrincipal = "Ferrari SF70H (F1)",
+            VehiculoPrincipal = "Ferrari SF70H",
             SimuladorPrincipal = "Assetto Corsa · Shared Memory Win32 MMF",
             PaceRating = 2850,
             SafetyRating = "S",
             Nivel = "Alien F1",
-            PuntajeGeneral = 96.5f,
+            PuntajeGeneral = 95.4f,
             VueltasTotales = 34,
-            KilometrosTotales = 196.4f,
+            KilometrosTotales = 196.9f,
+            PorcentajeVueltasValidas = 94.1f,
+            VelocidadMaximaKmh = 342.8f,
             UltimaEvaluacion = new EvaluacionRendimientoDto
             {
                 UsuarioId = usuarioId,
@@ -383,10 +439,25 @@ public sealed class RepositorioPerfilesPostgreSql : IRepositorioPerfilesPiloto
                 TraccionSalida = 94,
                 VelocidadApice = 98,
                 RespetoLimites = 92,
+                ConsejoFrenada = "Excelente modulación. Descompresión lineal de frenada hacia el vértice.",
+                ConsejoTraccion = "Excelente apertura de acelerador y despliegue de potencia a la salida.",
+                ConsejoApice = "Velocidad de vértice sobresaliente aprovechando la carga aerodinámica.",
+                ConsejoConsistencia = "Ritmo quirúrgico con mínima dispersión entre vueltas consecutivas.",
+                ConsejoLimites = "Aprovechamiento óptimo de los pianos respetando los límites de pista.",
                 PuntoFuerteTitulo = "Variante Ascari & Curva Grande",
                 PuntoFuerteDesc = "Paso por curva con carga aerodinámica máxima impecable.",
                 OportunidadMejoraTitulo = "Entrada a Variante del Rettifilo (Curva 1)",
                 OportunidadMejoraDesc = "Frenada en los 120 metros con deceleración extrema de -3.2G."
+            },
+            Records = new List<RecordCircuitoPilotoDto>
+            {
+                new() { Id = "monza", Circuito = "Autodromo Nazionale Monza", Pais = "ITA", Tiempo = "01:21.240", EsRecordSesion = true },
+                new() { Id = "redbullring", Circuito = "Red Bull Ring (Spielberg)", Pais = "AUT", Tiempo = "01:05.410", EsRecordSesion = true }
+            },
+            Logros = new List<LogroPilotoDto>
+            {
+                new() { Id = "monza-sub-82", Titulo = "Muro de la Velocidad", Descripcion = "Vuelta por debajo de 01:22.000 en Monza.", Icono = "zap", Desbloqueado = true, FechaDesbloqueo = "2026-10-31" },
+                new() { Id = "ritmo-quirurgico", Titulo = "Ritmo Quirúrgico", Descripcion = "Vueltas consecutivas dentro de un delta consistente.", Icono = "crosshair", Desbloqueado = true, FechaDesbloqueo = "2026-10-25" }
             }
         };
     }

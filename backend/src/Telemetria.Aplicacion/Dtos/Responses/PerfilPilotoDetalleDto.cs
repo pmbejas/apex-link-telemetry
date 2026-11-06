@@ -93,6 +93,12 @@ public sealed record PerfilPilotoDetalleDto
     [JsonPropertyName("kilometrosTotales")]
     public float KilometrosTotales { get; init; }
 
+    [JsonPropertyName("porcentajeVueltasValidas")]
+    public float PorcentajeVueltasValidas { get; init; } = 95.0f;
+
+    [JsonPropertyName("velocidadMaximaKmh")]
+    public float VelocidadMaximaKmh { get; init; } = 0.0f;
+
     [JsonPropertyName("ultimaEvaluacion")]
     public EvaluacionRendimientoDto? UltimaEvaluacion { get; init; }
 

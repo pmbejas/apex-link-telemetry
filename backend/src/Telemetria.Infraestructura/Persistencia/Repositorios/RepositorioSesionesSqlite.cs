@@ -108,7 +108,7 @@ public sealed class RepositorioSesionesSqlite : IRepositorioSesionesLocal
             var query = _contexto.Sesiones.AsNoTracking();
             if (usuarioId.HasValue && usuarioId.Value != Guid.Empty)
             {
-                query = query.Where(sesion => sesion.UsuarioId == usuarioId.Value);
+                query = query.Where(sesion => sesion.UsuarioId == usuarioId.Value || (sesion.UsuarioId == null && !sesion.EsSimulacionMock));
             }
 
             return await query
@@ -133,7 +133,7 @@ public sealed class RepositorioSesionesSqlite : IRepositorioSesionesLocal
             var query = _contexto.Sesiones.AsNoTracking();
             if (usuarioId.HasValue && usuarioId.Value != Guid.Empty)
             {
-                query = query.Where(sesion => sesion.UsuarioId == usuarioId.Value);
+                query = query.Where(sesion => sesion.UsuarioId == usuarioId.Value || (sesion.UsuarioId == null && !sesion.EsSimulacionMock));
             }
 
             return await query.CountAsync(tokenCancelacion);
@@ -183,6 +183,39 @@ public sealed class RepositorioSesionesSqlite : IRepositorioSesionesLocal
         catch (Exception excepcion)
         {
             _logger.LogError(excepcion, "Error al eliminar la sesión {SesionId} en SQLite.", sesionId);
+            throw;
+        }
+    }
+
+    public async Task AsignarUsuarioASesionesSinPilotoAsync(Guid usuarioId, CancellationToken tokenCancelacion = default)
+    {
+        if (usuarioId == Guid.Empty)
+        {
+            return;
+        }
+
+        try
+        {
+            var sesionesHuerfanas = await _contexto.Sesiones
+                .Where(s => s.UsuarioId == null && !s.EsSimulacionMock)
+                .ToListAsync(tokenCancelacion);
+
+            if (sesionesHuerfanas.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var sesion in sesionesHuerfanas)
+            {
+                sesion.UsuarioId = usuarioId;
+            }
+
+            await _contexto.SaveChangesAsync(tokenCancelacion);
+            _logger.LogInformation("Adoptadas {Cantidad} sesiones sin piloto previo para el usuario {UsuarioId}.", sesionesHuerfanas.Count, usuarioId);
+        }
+        catch (Exception excepcion)
+        {
+            _logger.LogError(excepcion, "Error al adoptar sesiones sin piloto para el usuario {UsuarioId}.", usuarioId);
             throw;
         }
     }

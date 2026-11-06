@@ -242,29 +242,85 @@ public sealed class ServicioAnalisisTelemetria : IServicioAnalisisTelemetria
         string circuitoFiltro = string.IsNullOrWhiteSpace(circuito) ? "monza" : circuito.Trim();
         var vueltas = await _repositorioVueltas.ObtenerMejoresVueltasPorCircuitoAsync(circuitoFiltro, limite, tokenCancelacion);
 
-        if (vueltas.Count > 0)
+        var vueltasReales = vueltas
+            .Where(v => v.Sesion == null || !v.Sesion.EsSimulacionMock)
+            .ToList();
+
+        var baseReferencia = ObtenerLeaderboardBase(circuitoFiltro);
+
+        if (vueltasReales.Count == 0)
         {
-            int mejorTiempo = vueltas[0].TiempoVueltaMs;
-            return vueltas.Select((v, index) =>
-            {
-                var (nombrePiloto, aliasPiloto) = ObtenerNombrePiloto(v.Sesion?.UsuarioId, index);
-                return new LeaderboardItemDto
-                {
-                    Posicion = index + 1,
-                    Piloto = nombrePiloto,
-                    Alias = aliasPiloto,
-                    Tiempo = v.TiempoVueltaTexto,
-                    TiempoMs = v.TiempoVueltaMs,
-                    Delta = index == 0 ? "Ref" : $"+{((v.TiempoVueltaMs - mejorTiempo) / 1000.0):F3} s",
-                    Auto = FormatearNombreVehiculo(v.Sesion?.ModeloVehiculo),
-                    Circuito = v.Sesion?.Circuito ?? circuitoFiltro,
-                    Vueltas = v.Sesion?.TotalVueltas ?? 1,
-                    EsRecord = index == 0
-                };
-            }).ToList();
+            return baseReferencia.Take(Math.Max(1, limite)).ToList();
         }
 
-        return ObtenerLeaderboardBase(circuitoFiltro);
+        var guidPilotoDefault = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var mejoresPorPiloto = vueltasReales
+            .GroupBy(v => v.Sesion?.UsuarioId ?? guidPilotoDefault)
+            .Select(grupo =>
+            {
+                var mejorVuelta = grupo.OrderBy(v => v.TiempoVueltaMs).First();
+                int totalVueltasPiloto = grupo
+                    .Where(v => v.Sesion != null)
+                    .Select(v => v.Sesion!)
+                    .DistinctBy(s => s.Id)
+                    .Sum(s => Math.Max(1, s.TotalVueltas));
+                if (totalVueltasPiloto == 0) totalVueltasPiloto = grupo.Count();
+                return (UsuarioId: grupo.Key, MejorVuelta: mejorVuelta, TotalVueltas: totalVueltasPiloto);
+            })
+            .ToList();
+
+        var itemsCombinados = new List<LeaderboardItemDto>();
+        var aliasesReales = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        for (int i = 0; i < mejoresPorPiloto.Count; i++)
+        {
+            var entrada = mejoresPorPiloto[i];
+            var (nombrePiloto, aliasPiloto) = ObtenerNombrePiloto(entrada.UsuarioId, i);
+            aliasesReales.Add(aliasPiloto);
+
+            itemsCombinados.Add(new LeaderboardItemDto
+            {
+                Posicion = 0,
+                Piloto = nombrePiloto,
+                Alias = aliasPiloto,
+                Tiempo = entrada.MejorVuelta.TiempoVueltaTexto,
+                TiempoMs = entrada.MejorVuelta.TiempoVueltaMs,
+                Delta = "Ref",
+                Auto = FormatearNombreVehiculo(entrada.MejorVuelta.Sesion?.ModeloVehiculo),
+                Circuito = entrada.MejorVuelta.Sesion?.Circuito ?? circuitoFiltro,
+                Vueltas = entrada.TotalVueltas,
+                EsRecord = false
+            });
+        }
+
+        foreach (var itemBase in baseReferencia)
+        {
+            if (!aliasesReales.Contains(itemBase.Alias))
+            {
+                itemsCombinados.Add(itemBase);
+            }
+        }
+
+        var ordenados = itemsCombinados
+            .OrderBy(item => item.TiempoMs > 0 ? item.TiempoMs : int.MaxValue)
+            .Take(Math.Max(1, limite))
+            .ToList();
+
+        int mejorTiempoGlobal = ordenados.Count > 0 ? ordenados[0].TiempoMs : 0;
+
+        return ordenados.Select((item, idx) => new LeaderboardItemDto
+        {
+            Posicion = idx + 1,
+            Piloto = item.Piloto,
+            Alias = item.Alias,
+            Tiempo = item.Tiempo,
+            TiempoMs = item.TiempoMs,
+            Delta = idx == 0 ? "Ref" : $"+{((item.TiempoMs - mejorTiempoGlobal) / 1000.0):F3} s",
+            Auto = item.Auto,
+            Circuito = item.Circuito,
+            Vueltas = item.Vueltas,
+            EsRecord = idx == 0
+        }).ToList();
     }
 
     private static (string Piloto, string Alias) ObtenerNombrePiloto(Guid? usuarioId, int indice)
@@ -272,23 +328,27 @@ public sealed class ServicioAnalisisTelemetria : IServicioAnalisisTelemetria
         if (usuarioId.HasValue)
         {
             string idStr = usuarioId.Value.ToString().ToLowerInvariant();
-            if (idStr.StartsWith("a1a1a1a1") || idStr.Contains("garlati"))
+            if (idStr.StartsWith("11111111") || idStr.StartsWith("a1a1a1a1") || idStr.Contains("garlati"))
             {
-                return ("Alejo Garlati", "AG_GARLATI");
+                return ("Alejo Garlati", "AG_PRO");
             }
-            if (idStr.StartsWith("b2b2b2b2") || idStr.Contains("salas"))
+            if (idStr.StartsWith("22222222") || idStr.StartsWith("b2b2b2b2") || idStr.Contains("salas"))
             {
-                return ("Alejo Salas", "AS_SALAS");
+                return ("Alejo Salas", "AS_GT3");
             }
-            if (idStr.StartsWith("c3c3c3c3") || idStr.Contains("admin"))
+            if (idStr.StartsWith("00000000") || idStr.StartsWith("c3c3c3c3") || idStr.Contains("admin"))
             {
                 return ("Administrador", "ADMIN");
             }
+            if (idStr.StartsWith("a0eebc99"))
+            {
+                return ("Piloto Invitado (FAPPE)", "PILOTO_01");
+            }
         }
-        return (indice == 0 ? "Alejo Garlati" : $"Piloto #{indice + 1}", indice == 0 ? "AG_GARLATI" : $"PILOTO_{indice + 1:D2}");
+        return (indice == 0 ? "Alejo Garlati" : $"Piloto #{indice + 1}", indice == 0 ? "AG_PRO" : $"PILOTO_{indice + 1:D2}");
     }
 
-    private static string FormatearNombreVehiculo(string? modelo)
+    public static string FormatearNombreVehiculo(string? modelo)
     {
         if (string.IsNullOrWhiteSpace(modelo)) return "Ferrari SF70H";
         return modelo.ToLowerInvariant() switch

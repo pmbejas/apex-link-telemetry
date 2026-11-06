@@ -134,6 +134,8 @@ public sealed class ServicioGestionVueltas : BackgroundService, IControlPilotoAc
             return;
         }
 
+        bool habiaPilotoPrevioDistinto = _pilotoActivoId.HasValue && _pilotoActivoId.Value != usuarioId;
+
         _logger.LogInformation("Conmutando piloto activo en cabina: {AnteriorId} -> {NuevoId} ({Nombre} / '{Alias}')",
             _pilotoActivoId, usuarioId, nombre, alias);
 
@@ -141,7 +143,22 @@ public sealed class ServicioGestionVueltas : BackgroundService, IControlPilotoAc
         _pilotoActivoNombre = nombre;
         _pilotoActivoAlias = alias;
 
-        // Si hay una sesión activa abierta con el piloto anterior, cerrarla de inmediato para que las próximas vueltas se asignen al nuevo piloto
+        if (!habiaPilotoPrevioDistinto)
+        {
+            try
+            {
+                using var alcance = _factoriaAlcances.CreateScope();
+                var repositorioSesiones = alcance.ServiceProvider.GetRequiredService<IRepositorioSesionesLocal>();
+                await repositorioSesiones.AsignarUsuarioASesionesSinPilotoAsync(usuarioId, token);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "No se pudieron adoptar sesiones previas sin piloto para {UsuarioId}.", usuarioId);
+            }
+            return;
+        }
+
+        // Si había un piloto anterior distinto y hay una sesión activa abierta, cerrarla de inmediato para que las próximas vueltas se asignen al nuevo piloto
         if (_sesionActivaId.HasValue)
         {
             await CerrarSesionSiEstabaActivaAsync(token);
