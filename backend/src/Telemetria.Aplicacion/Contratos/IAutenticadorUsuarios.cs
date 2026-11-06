@@ -14,4 +14,14 @@ public interface IAutenticadorUsuarios
     Task<(LoginRespuestaDto? Resultado, string? Error)> RegistrarAsync(
         RegistroUsuarioRequest solicitud,
         CancellationToken token = default);
+
+    Task<(bool Exitoso, string Mensaje)> SolicitarRecuperacionPasswordAsync(
+        string email,
+        CancellationToken token = default);
+
+    Task<(bool Exitoso, string Mensaje)> ConfirmarRecuperacionPasswordAsync(
+        string email,
+        string codigo,
+        string nuevaPassword,
+        CancellationToken token = default);
 }

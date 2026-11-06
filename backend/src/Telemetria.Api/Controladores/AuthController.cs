@@ -101,4 +101,79 @@ public sealed class AuthController : ControllerBase
                 resultado,
                 "Piloto registrado y autenticado exitosamente en boxes."));
     }
+
+    [HttpPost("recuperar-solicitud")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(RespuestaApi<bool>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> SolicitarRecupero(
+        [FromBody] SolicitarRecuperoRequest solicitud,
+        CancellationToken tokenCancelacion)
+    {
+        if (solicitud == null || string.IsNullOrWhiteSpace(solicitud.Email))
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Status = StatusCodes.Status400BadRequest,
+                Title = "Correo requerido",
+                Detail = "Ingresá el correo electrónico asociado a tu licencia de piloto."
+            });
+        }
+
+        var (exitoso, mensaje) = await _autenticador.SolicitarRecuperacionPasswordAsync(
+            solicitud.Email,
+            tokenCancelacion);
+
+        if (!exitoso)
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Status = StatusCodes.Status400BadRequest,
+                Title = "No se pudo procesar la recuperación",
+                Detail = mensaje
+            });
+        }
+
+        return Ok(RespuestaApi<bool>.ConstruirExito(true, mensaje));
+    }
+
+    [HttpPost("recuperar-confirmar")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(RespuestaApi<bool>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ConfirmarRecupero(
+        [FromBody] ConfirmarRecuperoRequest solicitud,
+        CancellationToken tokenCancelacion)
+    {
+        if (solicitud == null ||
+            string.IsNullOrWhiteSpace(solicitud.Email) ||
+            string.IsNullOrWhiteSpace(solicitud.Codigo) ||
+            string.IsNullOrWhiteSpace(solicitud.NuevaPassword))
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Status = StatusCodes.Status400BadRequest,
+                Title = "Datos incompletos",
+                Detail = "Debés proporcionar correo, código de 6 dígitos y la nueva contraseña."
+            });
+        }
+
+        var (exitoso, mensaje) = await _autenticador.ConfirmarRecuperacionPasswordAsync(
+            solicitud.Email,
+            solicitud.Codigo,
+            solicitud.NuevaPassword,
+            tokenCancelacion);
+
+        if (!exitoso)
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Status = StatusCodes.Status400BadRequest,
+                Title = "Error de verificación",
+                Detail = mensaje
+            });
+        }
+
+        return Ok(RespuestaApi<bool>.ConstruirExito(true, mensaje));
+    }
 }
