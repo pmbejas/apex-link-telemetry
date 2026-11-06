@@ -107,7 +107,8 @@ public sealed class AutorizacionRbacYControladoresTests
     public async Task TelemetriaController_ObtenerSesiones_RetornaOkConRespuestaApi()
     {
         var mockServicioAnalisis = new Mock<IServicioAnalisisTelemetria>();
-        mockServicioAnalisis.Setup(s => s.ObtenerSesionesPaginadasAsync(1, 10, It.IsAny<CancellationToken>()))
+        var mockControlPiloto = new Mock<IControlPilotoActivo>();
+        mockServicioAnalisis.Setup(s => s.ObtenerSesionesPaginadasAsync(1, 10, It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PaginacionRespuesta<SesionResumenDto>
             {
                 Elementos = new List<SesionResumenDto> { new() { Circuito = "monza" } },
@@ -116,9 +117,9 @@ public sealed class AutorizacionRbacYControladoresTests
                 TotalRegistros = 1
             });
 
-        var controlador = new TelemetriaController(mockServicioAnalisis.Object);
+        var controlador = new TelemetriaController(mockServicioAnalisis.Object, mockControlPiloto.Object);
 
-        var accionResultado = await controlador.ObtenerSesiones(1, 10);
+        var accionResultado = await controlador.ObtenerSesiones(1, 10, null);
         var okResult = Assert.IsType<OkObjectResult>(accionResultado.Result);
         var respuestaApi = Assert.IsType<RespuestaApi<PaginacionRespuesta<SesionResumenDto>>>(okResult.Value);
 

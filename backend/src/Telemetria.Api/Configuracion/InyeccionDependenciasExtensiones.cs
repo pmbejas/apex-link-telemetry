@@ -108,7 +108,9 @@ public static class InyeccionDependenciasExtensiones
             proveedor.GetRequiredService<ManejadorWebSocketTelemetria>());
 
         servicios.AddHostedService<ServicioTelemetriaRelay>();
-        servicios.AddHostedService<ServicioGestionVueltas>();
+        servicios.AddSingleton<ServicioGestionVueltas>();
+        servicios.AddHostedService(proveedor => proveedor.GetRequiredService<ServicioGestionVueltas>());
+        servicios.AddSingleton<IControlPilotoActivo>(proveedor => proveedor.GetRequiredService<ServicioGestionVueltas>());
 
         return servicios;
     }

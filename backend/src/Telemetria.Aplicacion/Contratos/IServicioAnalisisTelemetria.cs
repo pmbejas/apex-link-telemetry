@@ -15,6 +15,11 @@ public interface IServicioAnalisisTelemetria
     Task<PaginacionRespuesta<SesionResumenDto>> ObtenerSesionesPaginadasAsync(
         int numeroPagina,
         int tamanioPagina,
+        Guid? usuarioId = null,
+        CancellationToken tokenCancelacion = default);
+
+    Task<bool> EliminarSesionAsync(
+        Guid sesionId,
         CancellationToken tokenCancelacion = default);
 
     Task<List<VueltaDto>> ObtenerVueltasPorSesionAsync(

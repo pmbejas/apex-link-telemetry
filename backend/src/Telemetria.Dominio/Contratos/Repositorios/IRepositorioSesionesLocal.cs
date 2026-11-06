@@ -13,13 +13,22 @@ public interface IRepositorioSesionesLocal
         string modeloVehiculo,
         int tipoSesion,
         bool esSimulacionMock,
+        Guid? usuarioId = null,
         CancellationToken tokenCancelacion = default);
 
     Task FinalizarSesionAsync(Guid sesionId, CancellationToken tokenCancelacion = default);
 
-    Task<List<Sesion>> ObtenerHistorialSesionesAsync(int pagina, int tamanioPagina, CancellationToken tokenCancelacion = default);
+    Task<List<Sesion>> ObtenerHistorialSesionesAsync(
+        int pagina,
+        int tamanioPagina,
+        Guid? usuarioId = null,
+        CancellationToken tokenCancelacion = default);
 
-    Task<int> ContarTotalSesionesAsync(CancellationToken tokenCancelacion = default);
+    Task<int> ContarTotalSesionesAsync(
+        Guid? usuarioId = null,
+        CancellationToken tokenCancelacion = default);
+
+    Task<bool> EliminarSesionAsync(Guid sesionId, CancellationToken tokenCancelacion = default);
 
     Task<List<Sesion>> ObtenerSesionesPendientesSincronizacionAsync(CancellationToken tokenCancelacion = default);
 

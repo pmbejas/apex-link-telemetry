@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 using Telemetria.Api.Autorizacion;
 using Telemetria.Aplicacion.Common;
 using Telemetria.Aplicacion.Contratos;
+using Telemetria.Aplicacion.Dtos.Requests;
 using Telemetria.Aplicacion.Dtos.Responses;
 
 /// <summary>
@@ -21,10 +22,14 @@ using Telemetria.Aplicacion.Dtos.Responses;
 public sealed class TelemetriaController : ControllerBase
 {
     private readonly IServicioAnalisisTelemetria _servicioAnalisis;
+    private readonly IControlPilotoActivo _controlPilotoActivo;
 
-    public TelemetriaController(IServicioAnalisisTelemetria servicioAnalisis)
+    public TelemetriaController(
+        IServicioAnalisisTelemetria servicioAnalisis,
+        IControlPilotoActivo controlPilotoActivo)
     {
         _servicioAnalisis = servicioAnalisis;
+        _controlPilotoActivo = controlPilotoActivo;
     }
 
     [HttpGet("sesiones")]
@@ -33,12 +38,31 @@ public sealed class TelemetriaController : ControllerBase
     public async Task<ActionResult<RespuestaApi<PaginacionRespuesta<SesionResumenDto>>>> ObtenerSesiones(
         [FromQuery] int numeroPagina = 1,
         [FromQuery] int tamanioPagina = 10,
+        [FromQuery] Guid? usuarioId = null,
         CancellationToken tokenCancelacion = default)
     {
         var paginacion = await _servicioAnalisis.ObtenerSesionesPaginadasAsync(
-            numeroPagina, tamanioPagina, tokenCancelacion);
+            numeroPagina, tamanioPagina, usuarioId, tokenCancelacion);
 
         return Ok(RespuestaApi<PaginacionRespuesta<SesionResumenDto>>.ConstruirExito(paginacion));
+    }
+
+    [HttpDelete("sesiones/{id:guid}")]
+    [HasPermission("sesion:listar")]
+    [ProducesResponseType(typeof(RespuestaApi<bool>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(RespuestaApi<bool>), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<RespuestaApi<bool>>> EliminarSesion(
+        Guid id,
+        CancellationToken tokenCancelacion = default)
+    {
+        bool eliminada = await _servicioAnalisis.EliminarSesionAsync(id, tokenCancelacion);
+        if (!eliminada)
+        {
+            return NotFound(RespuestaApi<bool>.ConstruirFallo(
+                "La tanda especificada no existe o no pudo ser eliminada."));
+        }
+
+        return Ok(RespuestaApi<bool>.ConstruirExito(true));
     }
 
     [HttpGet("sesiones/{id:guid}/vueltas")]
@@ -115,5 +139,35 @@ public sealed class TelemetriaController : ControllerBase
     {
         var ranking = await _servicioAnalisis.ObtenerLeaderboardAsync(circuito, limite, tokenCancelacion);
         return Ok(RespuestaApi<List<LeaderboardItemDto>>.ConstruirExito(ranking));
+    }
+
+    [HttpGet("telemetria/piloto-activo")]
+    [HasPermission("sesion:listar")]
+    [ProducesResponseType(typeof(RespuestaApi<object>), StatusCodes.Status200OK)]
+    public ActionResult<RespuestaApi<object>> ObtenerPilotoActivo()
+    {
+        var datos = new
+        {
+            usuarioId = _controlPilotoActivo.PilotoActivoId,
+            nombre = _controlPilotoActivo.PilotoActivoNombre,
+            alias = _controlPilotoActivo.PilotoActivoAlias
+        };
+        return Ok(RespuestaApi<object>.ConstruirExito(datos));
+    }
+
+    [HttpPost("telemetria/piloto-activo")]
+    [HasPermission("sesion:listar")]
+    [ProducesResponseType(typeof(RespuestaApi<bool>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<RespuestaApi<bool>>> FijarPilotoActivo(
+        [FromBody] DeclararPilotoActivoRequest request,
+        CancellationToken tokenCancelacion = default)
+    {
+        await _controlPilotoActivo.FijarPilotoActivoAsync(
+            request.UsuarioId,
+            request.Nombre,
+            request.Alias,
+            tokenCancelacion);
+
+        return Ok(RespuestaApi<bool>.ConstruirExito(true));
     }
 }

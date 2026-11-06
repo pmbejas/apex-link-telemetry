@@ -30,9 +30,9 @@ public sealed class ServicioAnalisisTelemetriaTests
             new() { Id = Guid.NewGuid(), Circuito = "spa", TotalVueltas = 15, FechaInicio = DateTimeOffset.UtcNow }
         };
 
-        _mockSesiones.Setup(r => r.ObtenerHistorialSesionesAsync(1, 2, It.IsAny<CancellationToken>()))
+        _mockSesiones.Setup(r => r.ObtenerHistorialSesionesAsync(1, 2, It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(sesiones);
-        _mockSesiones.Setup(r => r.ContarTotalSesionesAsync(It.IsAny<CancellationToken>()))
+        _mockSesiones.Setup(r => r.ContarTotalSesionesAsync(It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(5);
 
         var respuesta = await _servicio.ObtenerSesionesPaginadasAsync(numeroPagina: 1, tamanioPagina: 2);

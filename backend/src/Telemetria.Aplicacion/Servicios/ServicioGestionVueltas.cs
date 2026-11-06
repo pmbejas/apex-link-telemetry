@@ -14,7 +14,7 @@ using Telemetria.Dominio.Modelos;
 /// Servicio en segundo plano que consume muestras del canal en memoria,
 /// acumula la telemetría del giro actual y persiste la vuelta transaccionalmente al cruzar meta.
 /// </summary>
-public sealed class ServicioGestionVueltas : BackgroundService
+public sealed class ServicioGestionVueltas : BackgroundService, IControlPilotoActivo
 {
     private const int MAXIMO_MUESTRAS_POR_VUELTA = 36000; // Cota máxima: 10 minutos a 60 Hz
 
@@ -25,12 +25,19 @@ public sealed class ServicioGestionVueltas : BackgroundService
 
     private readonly List<MuestraTelemetria> _bufferMuestrasVuelta = new(capacity: 7200);
     private Guid? _sesionActivaId;
+    private Guid? _pilotoActivoId;
+    private string _pilotoActivoNombre = string.Empty;
+    private string _pilotoActivoAlias = string.Empty;
     private string _circuitoActivo = string.Empty;
     private string _modeloAutoActivo = string.Empty;
     private int _tipoSesionActiva = -1;
     private bool _modoMockActivo = false;
     private int _numeroVueltaActual = -1;
     private int _mejorTiempoSesionMs = 0;
+
+    public Guid? PilotoActivoId => _pilotoActivoId;
+    public string PilotoActivoNombre => _pilotoActivoNombre;
+    public string PilotoActivoAlias => _pilotoActivoAlias;
 
     public ServicioGestionVueltas(
         ChannelReader<CuadroTelemetria> canalLector,
@@ -118,6 +125,29 @@ public sealed class ServicioGestionVueltas : BackgroundService
         return cambioContexto || reinicioContador;
     }
 
+    public async Task FijarPilotoActivoAsync(Guid usuarioId, string nombre, string alias, CancellationToken token = default)
+    {
+        if (_pilotoActivoId == usuarioId)
+        {
+            _pilotoActivoNombre = nombre;
+            _pilotoActivoAlias = alias;
+            return;
+        }
+
+        _logger.LogInformation("Conmutando piloto activo en cabina: {AnteriorId} -> {NuevoId} ({Nombre} / '{Alias}')",
+            _pilotoActivoId, usuarioId, nombre, alias);
+
+        _pilotoActivoId = usuarioId;
+        _pilotoActivoNombre = nombre;
+        _pilotoActivoAlias = alias;
+
+        // Si hay una sesión activa abierta con el piloto anterior, cerrarla de inmediato para que las próximas vueltas se asignen al nuevo piloto
+        if (_sesionActivaId.HasValue)
+        {
+            await CerrarSesionSiEstabaActivaAsync(token);
+        }
+    }
+
     private async Task CerrarSesionSiEstabaActivaAsync(CancellationToken token)
     {
         if (!_sesionActivaId.HasValue)
@@ -140,6 +170,7 @@ public sealed class ServicioGestionVueltas : BackgroundService
             cuadro.ModeloAuto,
             cuadro.TipoSesion,
             cuadro.EsSimulacionMock,
+            _pilotoActivoId,
             token);
 
         _circuitoActivo = cuadro.Circuito;

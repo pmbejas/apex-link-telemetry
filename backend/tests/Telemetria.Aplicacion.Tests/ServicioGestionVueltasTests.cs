@@ -27,7 +27,7 @@ public sealed class ServicioGestionVueltasTests
 
         Guid sesionId = Guid.NewGuid();
         mockSesiones
-            .Setup(r => r.IniciarSesionAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.IniciarSesionAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(sesionId);
 
         var mockScope = new Mock<IServiceScope>();
@@ -88,7 +88,7 @@ public sealed class ServicioGestionVueltasTests
         await servicio.ExecuteTask!;
 
         // Verificaciones
-        mockSesiones.Verify(r => r.IniciarSesionAsync("monza", "gp", "ferrari_488", 2, false, It.IsAny<CancellationToken>()), Times.Once);
+        mockSesiones.Verify(r => r.IniciarSesionAsync("monza", "gp", "ferrari_488", 2, false, It.IsAny<Guid?>(), It.IsAny<CancellationToken>()), Times.Once);
 
         mockVueltas.Verify(r => r.GuardarVueltaConTelemetriaAsync(
             It.Is<Vuelta>(v => v.Id == vueltaIdEsperada && v.NumeroVuelta == 1 && v.TiempoVueltaMs == 82500 && v.EsValida),
@@ -110,7 +110,7 @@ public sealed class ServicioGestionVueltasTests
 
         Guid sesionId = Guid.NewGuid();
         mockSesiones
-            .Setup(r => r.IniciarSesionAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.IniciarSesionAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(sesionId);
 
         var mockScope = new Mock<IServiceScope>();
@@ -169,7 +169,7 @@ public sealed class ServicioGestionVueltasTests
 
         Guid sesionId = Guid.NewGuid();
         mockSesiones
-            .Setup(r => r.IniciarSesionAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.IniciarSesionAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(sesionId);
 
         var mockScope = new Mock<IServiceScope>();

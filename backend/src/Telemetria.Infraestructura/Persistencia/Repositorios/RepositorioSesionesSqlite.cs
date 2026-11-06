@@ -29,6 +29,7 @@ public sealed class RepositorioSesionesSqlite : IRepositorioSesionesLocal
         string modeloVehiculo,
         int tipoSesion,
         bool esSimulacionMock,
+        Guid? usuarioId = null,
         CancellationToken tokenCancelacion = default)
     {
         try
@@ -36,6 +37,7 @@ public sealed class RepositorioSesionesSqlite : IRepositorioSesionesLocal
             var nuevaSesion = new Sesion
             {
                 Id = Guid.NewGuid(),
+                UsuarioId = usuarioId,
                 Circuito = circuito,
                 ConfiguracionCircuito = configuracionCircuito,
                 ModeloVehiculo = modeloVehiculo,
@@ -94,6 +96,7 @@ public sealed class RepositorioSesionesSqlite : IRepositorioSesionesLocal
     public async Task<List<Sesion>> ObtenerHistorialSesionesAsync(
         int pagina,
         int tamanioPagina,
+        Guid? usuarioId = null,
         CancellationToken tokenCancelacion = default)
     {
         try
@@ -102,8 +105,13 @@ public sealed class RepositorioSesionesSqlite : IRepositorioSesionesLocal
             int tamanioSanitizado = Math.Clamp(tamanioPagina, 1, TAMANIO_MAXIMO_PAGINA);
             int registrosASaltar = (paginaSanitizada - 1) * tamanioSanitizado;
 
-            return await _contexto.Sesiones
-                .AsNoTracking()
+            var query = _contexto.Sesiones.AsNoTracking();
+            if (usuarioId.HasValue && usuarioId.Value != Guid.Empty)
+            {
+                query = query.Where(sesion => sesion.UsuarioId == usuarioId.Value);
+            }
+
+            return await query
                 .OrderByDescending(sesion => sesion.FechaInicio)
                 .Skip(registrosASaltar)
                 .Take(tamanioSanitizado)
@@ -116,15 +124,65 @@ public sealed class RepositorioSesionesSqlite : IRepositorioSesionesLocal
         }
     }
 
-    public async Task<int> ContarTotalSesionesAsync(CancellationToken tokenCancelacion = default)
+    public async Task<int> ContarTotalSesionesAsync(
+        Guid? usuarioId = null,
+        CancellationToken tokenCancelacion = default)
     {
         try
         {
-            return await _contexto.Sesiones.CountAsync(tokenCancelacion);
+            var query = _contexto.Sesiones.AsNoTracking();
+            if (usuarioId.HasValue && usuarioId.Value != Guid.Empty)
+            {
+                query = query.Where(sesion => sesion.UsuarioId == usuarioId.Value);
+            }
+
+            return await query.CountAsync(tokenCancelacion);
         }
         catch (Exception excepcion)
         {
             _logger.LogError(excepcion, "Error al contabilizar el total de sesiones en SQLite.");
+            throw;
+        }
+    }
+
+    public async Task<bool> EliminarSesionAsync(Guid sesionId, CancellationToken tokenCancelacion = default)
+    {
+        try
+        {
+            var sesion = await _contexto.Sesiones
+                .Include(s => s.Vueltas)
+                .FirstOrDefaultAsync(s => s.Id == sesionId, tokenCancelacion);
+
+            if (sesion == null)
+            {
+                return false;
+            }
+
+            // Eliminar muestras asociadas si no se propagaron por cascada en SQLite
+            var vueltasIds = sesion.Vueltas.Select(v => v.Id).ToList();
+            if (vueltasIds.Count > 0)
+            {
+                var muestras = await _contexto.MuestrasTelemetria
+                    .Where(m => vueltasIds.Contains(m.VueltaId))
+                    .ToListAsync(tokenCancelacion);
+
+                if (muestras.Count > 0)
+                {
+                    _contexto.MuestrasTelemetria.RemoveRange(muestras);
+                }
+
+                _contexto.Vueltas.RemoveRange(sesion.Vueltas);
+            }
+
+            _contexto.Sesiones.Remove(sesion);
+            await _contexto.SaveChangesAsync(tokenCancelacion);
+
+            _logger.LogInformation("Sesión {SesionId} eliminada exitosamente de SQLite.", sesionId);
+            return true;
+        }
+        catch (Exception excepcion)
+        {
+            _logger.LogError(excepcion, "Error al eliminar la sesión {SesionId} en SQLite.", sesionId);
             throw;
         }
     }

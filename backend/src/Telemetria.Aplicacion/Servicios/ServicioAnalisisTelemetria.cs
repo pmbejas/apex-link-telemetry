@@ -39,20 +39,21 @@ public sealed class ServicioAnalisisTelemetria : IServicioAnalisisTelemetria
     public async Task<PaginacionRespuesta<SesionResumenDto>> ObtenerSesionesPaginadasAsync(
         int numeroPagina,
         int tamanioPagina,
+        Guid? usuarioId = null,
         CancellationToken tokenCancelacion = default)
     {
         int paginaValidada = Math.Max(PAGINA_MINIMA, numeroPagina);
         int tamanioValidado = Math.Clamp(tamanioPagina, TAMANIO_PAGINA_MINIMO, TAMANIO_PAGINA_MAXIMO);
 
-        var sesiones = await _repositorioSesiones.ObtenerHistorialSesionesAsync(paginaValidada, tamanioValidado, tokenCancelacion);
-        int totalRegistros = await _repositorioSesiones.ContarTotalSesionesAsync(tokenCancelacion);
+        var sesiones = await _repositorioSesiones.ObtenerHistorialSesionesAsync(paginaValidada, tamanioValidado, usuarioId, tokenCancelacion);
+        int totalRegistros = await _repositorioSesiones.ContarTotalSesionesAsync(usuarioId, tokenCancelacion);
 
         var elementosDto = sesiones.Select(sesion => new SesionResumenDto
         {
             Id = sesion.Id,
             Circuito = sesion.Circuito,
             ConfiguracionCircuito = sesion.ConfiguracionCircuito,
-            ModeloVehiculo = sesion.ModeloVehiculo,
+            ModeloVehiculo = FormatearNombreVehiculo(sesion.ModeloVehiculo),
             TipoSesion = sesion.TipoSesion,
             EsSimulacionMock = sesion.EsSimulacionMock,
             FechaInicio = sesion.FechaInicio,
@@ -68,6 +69,13 @@ public sealed class ServicioAnalisisTelemetria : IServicioAnalisisTelemetria
             TamanioPagina = tamanioValidado,
             TotalRegistros = totalRegistros
         };
+    }
+
+    public async Task<bool> EliminarSesionAsync(
+        Guid sesionId,
+        CancellationToken tokenCancelacion = default)
+    {
+        return await _repositorioSesiones.EliminarSesionAsync(sesionId, tokenCancelacion);
     }
 
     public async Task<List<VueltaDto>> ObtenerVueltasPorSesionAsync(
@@ -237,22 +245,61 @@ public sealed class ServicioAnalisisTelemetria : IServicioAnalisisTelemetria
         if (vueltas.Count > 0)
         {
             int mejorTiempo = vueltas[0].TiempoVueltaMs;
-            return vueltas.Select((v, index) => new LeaderboardItemDto
+            return vueltas.Select((v, index) =>
             {
-                Posicion = index + 1,
-                Piloto = index == 0 ? "Piloto de Pruebas (Stand)" : $"Piloto #{index + 1} (FAPPE)",
-                Alias = index == 0 ? "PILOTO_01" : $"PILOTO_{index + 1:D2}",
-                Tiempo = v.TiempoVueltaTexto,
-                TiempoMs = v.TiempoVueltaMs,
-                Delta = index == 0 ? "Ref" : $"+{((v.TiempoVueltaMs - mejorTiempo) / 1000.0):F3} s",
-                Auto = v.Sesion?.ModeloVehiculo ?? "Ferrari SF70H",
-                Circuito = v.Sesion?.Circuito ?? circuitoFiltro,
-                Vueltas = v.Sesion?.TotalVueltas ?? 1,
-                EsRecord = index == 0
+                var (nombrePiloto, aliasPiloto) = ObtenerNombrePiloto(v.Sesion?.UsuarioId, index);
+                return new LeaderboardItemDto
+                {
+                    Posicion = index + 1,
+                    Piloto = nombrePiloto,
+                    Alias = aliasPiloto,
+                    Tiempo = v.TiempoVueltaTexto,
+                    TiempoMs = v.TiempoVueltaMs,
+                    Delta = index == 0 ? "Ref" : $"+{((v.TiempoVueltaMs - mejorTiempo) / 1000.0):F3} s",
+                    Auto = FormatearNombreVehiculo(v.Sesion?.ModeloVehiculo),
+                    Circuito = v.Sesion?.Circuito ?? circuitoFiltro,
+                    Vueltas = v.Sesion?.TotalVueltas ?? 1,
+                    EsRecord = index == 0
+                };
             }).ToList();
         }
 
         return ObtenerLeaderboardBase(circuitoFiltro);
+    }
+
+    private static (string Piloto, string Alias) ObtenerNombrePiloto(Guid? usuarioId, int indice)
+    {
+        if (usuarioId.HasValue)
+        {
+            string idStr = usuarioId.Value.ToString().ToLowerInvariant();
+            if (idStr.StartsWith("a1a1a1a1") || idStr.Contains("garlati"))
+            {
+                return ("Alejo Garlati", "AG_GARLATI");
+            }
+            if (idStr.StartsWith("b2b2b2b2") || idStr.Contains("salas"))
+            {
+                return ("Alejo Salas", "AS_SALAS");
+            }
+            if (idStr.StartsWith("c3c3c3c3") || idStr.Contains("admin"))
+            {
+                return ("Administrador", "ADMIN");
+            }
+        }
+        return (indice == 0 ? "Alejo Garlati" : $"Piloto #{indice + 1}", indice == 0 ? "AG_GARLATI" : $"PILOTO_{indice + 1:D2}");
+    }
+
+    private static string FormatearNombreVehiculo(string? modelo)
+    {
+        if (string.IsNullOrWhiteSpace(modelo)) return "Ferrari SF70H";
+        return modelo.ToLowerInvariant() switch
+        {
+            "rss_formula_rss_supreme_25" => "Formula RSS Supreme 2025",
+            "ks_ferrari_sf70h" => "Ferrari SF70H",
+            "ks_porsche_911_gt3_r_2016" => "Porsche 911 GT3 R",
+            "bmw_m2_cs_racing" => "BMW M2 CS Racing",
+            "tatuusfa01" => "Tatuus FA01",
+            _ => modelo.Replace("_", " ").Trim()
+        };
     }
 
     private static List<LeaderboardItemDto> ObtenerLeaderboardBase(string circuito)
