@@ -274,6 +274,46 @@ public sealed class RepositorioPerfilesPostgreSql : IRepositorioPerfilesPiloto
 
     private static PerfilPilotoDetalleDto ObtenerFallbackPiloto(Guid usuarioId)
     {
+        bool esAdmin = usuarioId.ToString().StartsWith("00000000");
+        if (esAdmin)
+        {
+            return new PerfilPilotoDetalleDto
+            {
+                UsuarioId = usuarioId,
+                Nombre = "ApexLink Administrador",
+                Alias = "ADMIN",
+                Email = "admin@apexlink.io",
+                Licencia = "Licencia FIA Master Admin",
+                Nacionalidad = "International",
+                CodigoPais = "INT",
+                VehiculoPrincipal = "Ferrari SF70H / Pitwall Control",
+                SimuladorPrincipal = "Assetto Corsa · Shared Memory Win32 MMF & Mock",
+                PaceRating = 9999,
+                SafetyRating = "S+",
+                Nivel = "Administrador Maestro",
+                PuntajeGeneral = 100.0f,
+                VueltasTotales = 1000,
+                KilometrosTotales = 5000.0f,
+                UltimaEvaluacion = new EvaluacionRendimientoDto
+                {
+                    UsuarioId = usuarioId,
+                    Velocidad = 99,
+                    Consistencia = 99,
+                    Frenada = 99,
+                    Control = 99,
+                    Agresividad = 99,
+                    TrailBraking = 99,
+                    TraccionSalida = 99,
+                    VelocidadApice = 99,
+                    RespetoLimites = 100,
+                    PuntoFuerteTitulo = "Supervisión Global de Telemetría",
+                    PuntoFuerteDesc = "Acceso irrestricto a generador mock sintético y auditoría de telemetría a 60 Hz.",
+                    OportunidadMejoraTitulo = "Monitoreo en Tiempo Real",
+                    OportunidadMejoraDesc = "Supervisar telemetría de pilotos federados en pista."
+                }
+            };
+        }
+
         bool esSalas = usuarioId.ToString().StartsWith("22222222");
         if (esSalas)
         {
