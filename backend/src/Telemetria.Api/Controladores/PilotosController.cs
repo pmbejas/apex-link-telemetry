@@ -66,6 +66,11 @@ public sealed class PilotosController : ControllerBase
         CancellationToken token)
     {
         bool esAdmin = usuarioId.ToString().StartsWith("00000000");
+        if (!esAdmin && usuarioId != Guid.Empty)
+        {
+            await _repositorioSesiones.AsignarUsuarioASesionesSinPilotoAsync(usuarioId, token);
+        }
+
         var sesiones = await _repositorioSesiones.ObtenerHistorialSesionesAsync(1, 100, esAdmin ? null : usuarioId, token);
 
         var sesionesValidas = sesiones
@@ -77,11 +82,12 @@ public sealed class PilotosController : ControllerBase
             sesionesValidas = sesiones.Where(s => s.TotalVueltas > 0).ToList();
         }
 
-        // Si el usuario no es admin y posee fecha de registro oficial, descartar sesiones locales con FechaInicio anterior
+        // Si el usuario no es admin y posee fecha de registro oficial, descartar sesiones locales de fechas anteriores (con margen de 6h en el mismo día)
         if (perfilBase.FechaRegistro.HasValue && !esAdmin)
         {
+            var umbralRegistro = perfilBase.FechaRegistro.Value.AddHours(-6);
             sesionesValidas = sesionesValidas
-                .Where(s => s.FechaInicio >= perfilBase.FechaRegistro.Value)
+                .Where(s => s.FechaInicio >= umbralRegistro)
                 .ToList();
         }
 

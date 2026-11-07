@@ -196,12 +196,18 @@ public sealed class RepositorioSesionesSqlite : IRepositorioSesionesLocal
 
         try
         {
-            // Solo adoptar sesiones en curso en el simulador activo (FechaFin == null) iniciadas recientemente
-            // Jamás adoptar sesiones históricas cerradas de fechas o tandas anteriores
-            var umbralReciente = DateTimeOffset.UtcNow.AddMinutes(-15);
-            var sesionesHuerfanas = await _contexto.Sesiones
-                .Where(s => s.UsuarioId == null && !s.EsSimulacionMock && s.FechaFin == null && s.FechaInicio >= umbralReciente)
+            // Adoptar sesiones recientes iniciadas sin piloto activo:
+            // - Sesiones en curso en el simulador activo (FechaFin == null)
+            // - Sesiones recién finalizadas con vueltas completadas (TotalVueltas > 0) en las últimas 2 horas
+            // Jamás adoptar sesiones históricas antiguas ni sesiones vacías cerradas.
+            var umbralReciente = DateTimeOffset.UtcNow.AddHours(-2);
+            var candidatas = await _contexto.Sesiones
+                .Where(s => s.UsuarioId == null && !s.EsSimulacionMock)
                 .ToListAsync(tokenCancelacion);
+
+            var sesionesHuerfanas = candidatas
+                .Where(s => s.FechaInicio >= umbralReciente && (s.FechaFin == null || s.TotalVueltas > 0))
+                .ToList();
 
             if (sesionesHuerfanas.Count == 0)
             {

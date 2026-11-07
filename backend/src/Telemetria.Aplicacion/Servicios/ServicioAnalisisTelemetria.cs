@@ -45,6 +45,11 @@ public sealed class ServicioAnalisisTelemetria : IServicioAnalisisTelemetria
         int paginaValidada = Math.Max(PAGINA_MINIMA, numeroPagina);
         int tamanioValidado = Math.Clamp(tamanioPagina, TAMANIO_PAGINA_MINIMO, TAMANIO_PAGINA_MAXIMO);
 
+        if (usuarioId.HasValue && usuarioId.Value != Guid.Empty && !usuarioId.Value.ToString().StartsWith("00000000"))
+        {
+            await _repositorioSesiones.AsignarUsuarioASesionesSinPilotoAsync(usuarioId.Value, tokenCancelacion);
+        }
+
         var sesiones = await _repositorioSesiones.ObtenerHistorialSesionesAsync(paginaValidada, tamanioValidado, usuarioId, tokenCancelacion);
         int totalRegistros = await _repositorioSesiones.ContarTotalSesionesAsync(usuarioId, tokenCancelacion);
 

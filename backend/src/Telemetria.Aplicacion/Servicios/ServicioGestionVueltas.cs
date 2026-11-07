@@ -1,5 +1,7 @@
 namespace Telemetria.Aplicacion.Servicios;
 
+using System.IO;
+using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -17,6 +19,9 @@ using Telemetria.Dominio.Modelos;
 public sealed class ServicioGestionVueltas : BackgroundService, IControlPilotoActivo
 {
     private const int MAXIMO_MUESTRAS_POR_VUELTA = 36000; // Cota máxima: 10 minutos a 60 Hz
+    private static readonly string RutaArchivoPilotoActivo = Path.Combine(AppContext.BaseDirectory, "piloto_activo.json");
+
+    private sealed record EstadoPilotoPersistido(Guid UsuarioId, string Nombre, string Alias);
 
     private readonly ChannelReader<CuadroTelemetria> _canalLector;
     private readonly IServiceScopeFactory _factoriaAlcances;
@@ -54,6 +59,7 @@ public sealed class ServicioGestionVueltas : BackgroundService, IControlPilotoAc
     protected override async Task ExecuteAsync(CancellationToken tokenDetencion)
     {
         _logger.LogInformation("Iniciando servicio consumidor de persistencia de telemetría...");
+        CargarPilotoActivoPersistido();
 
         try
         {
@@ -62,6 +68,10 @@ public sealed class ServicioGestionVueltas : BackgroundService, IControlPilotoAc
             if (repositorioSesiones != null)
             {
                 await repositorioSesiones.CerrarSesionesAbiertasAsync(tokenDetencion);
+                if (_pilotoActivoId.HasValue && _pilotoActivoId.Value != Guid.Empty)
+                {
+                    await repositorioSesiones.AsignarUsuarioASesionesSinPilotoAsync(_pilotoActivoId.Value, tokenDetencion);
+                }
             }
         }
         catch (Exception ex)
@@ -141,41 +151,77 @@ public sealed class ServicioGestionVueltas : BackgroundService, IControlPilotoAc
 
     public async Task FijarPilotoActivoAsync(Guid usuarioId, string nombre, string alias, CancellationToken token = default)
     {
-        if (_pilotoActivoId == usuarioId)
-        {
-            _pilotoActivoNombre = nombre;
-            _pilotoActivoAlias = alias;
-            return;
-        }
-
         bool habiaPilotoPrevioDistinto = _pilotoActivoId.HasValue && _pilotoActivoId.Value != usuarioId;
 
-        _logger.LogInformation("Conmutando piloto activo en cabina: {AnteriorId} -> {NuevoId} ({Nombre} / '{Alias}')",
-            _pilotoActivoId, usuarioId, nombre, alias);
+        if (_pilotoActivoId != usuarioId)
+        {
+            _logger.LogInformation("Conmutando piloto activo en cabina: {AnteriorId} -> {NuevoId} ({Nombre} / '{Alias}')",
+                _pilotoActivoId, usuarioId, nombre, alias);
+        }
 
         _pilotoActivoId = usuarioId;
         _pilotoActivoNombre = nombre;
         _pilotoActivoAlias = alias;
+        GuardarPilotoActivoPersistido(usuarioId, nombre, alias);
 
-        if (!habiaPilotoPrevioDistinto)
+        // Si había un piloto anterior distinto y hay una sesión activa abierta, cerrarla de inmediato para que las próximas vueltas se asignen al nuevo piloto
+        if (habiaPilotoPrevioDistinto && _sesionActivaId.HasValue)
         {
-            try
-            {
-                using var alcance = _factoriaAlcances.CreateScope();
-                var repositorioSesiones = alcance.ServiceProvider.GetRequiredService<IRepositorioSesionesLocal>();
-                await repositorioSesiones.AsignarUsuarioASesionesSinPilotoAsync(usuarioId, token);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "No se pudieron adoptar sesiones previas sin piloto para {UsuarioId}.", usuarioId);
-            }
+            await CerrarSesionSiEstabaActivaAsync(token);
+        }
+
+        try
+        {
+            using var alcance = _factoriaAlcances.CreateScope();
+            var repositorioSesiones = alcance.ServiceProvider.GetRequiredService<IRepositorioSesionesLocal>();
+            await repositorioSesiones.AsignarUsuarioASesionesSinPilotoAsync(usuarioId, token);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "No se pudieron adoptar sesiones recientes sin piloto para {UsuarioId}.", usuarioId);
+        }
+    }
+
+    private void CargarPilotoActivoPersistido()
+    {
+        if (_pilotoActivoId.HasValue || !File.Exists(RutaArchivoPilotoActivo))
+        {
             return;
         }
 
-        // Si había un piloto anterior distinto y hay una sesión activa abierta, cerrarla de inmediato para que las próximas vueltas se asignen al nuevo piloto
-        if (_sesionActivaId.HasValue)
+        try
         {
-            await CerrarSesionSiEstabaActivaAsync(token);
+            string json = File.ReadAllText(RutaArchivoPilotoActivo);
+            var estado = JsonSerializer.Deserialize<EstadoPilotoPersistido>(json);
+            if (estado is not null && estado.UsuarioId != Guid.Empty)
+            {
+                _pilotoActivoId = estado.UsuarioId;
+                _pilotoActivoNombre = estado.Nombre ?? string.Empty;
+                _pilotoActivoAlias = estado.Alias ?? string.Empty;
+                _logger.LogInformation("Piloto activo restaurado en cabina tras reinicio: {UsuarioId} ({Nombre})", _pilotoActivoId, _pilotoActivoNombre);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "No se pudo restaurar el estado previo del piloto activo.");
+        }
+    }
+
+    private void GuardarPilotoActivoPersistido(Guid usuarioId, string nombre, string alias)
+    {
+        if (usuarioId == Guid.Empty)
+        {
+            return;
+        }
+
+        try
+        {
+            var estado = new EstadoPilotoPersistido(usuarioId, nombre ?? string.Empty, alias ?? string.Empty);
+            File.WriteAllText(RutaArchivoPilotoActivo, JsonSerializer.Serialize(estado));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "No se pudo persistir el piloto activo en disco.");
         }
     }
 

@@ -143,23 +143,39 @@ public sealed class RepositoriosSqliteTests : IAsyncDisposable
     {
         Guid nuevoUsuario = Guid.NewGuid();
 
-        // Sesión huérfana pero cerrada (histórica)
+        // Sesión huérfana vacía cerrada (sin vueltas)
         Guid sesionCerradaId = await _repositorioSesiones.IniciarSesionAsync("monza", "std", "auto_1", 2, false, null);
         await _repositorioSesiones.FinalizarSesionAsync(sesionCerradaId);
 
         // Sesión huérfana activa reciente (en pista ahora)
         Guid sesionActivaId = await _repositorioSesiones.IniciarSesionAsync("imola", "std", "auto_1", 2, false, null);
 
+        // Sesión huérfana recién cerrada con vueltas completadas (ej. el piloto cerró AC y luego abrió el navegador)
+        Guid sesionRecienteConVueltasId = await _repositorioSesiones.IniciarSesionAsync("spa", "std", "auto_1", 2, false, null);
+        await _repositorioVueltas.GuardarVueltaConTelemetriaAsync(new Vuelta
+        {
+            Id = Guid.NewGuid(),
+            SesionId = sesionRecienteConVueltasId,
+            NumeroVuelta = 1,
+            TiempoVueltaMs = 105000,
+            TiempoVueltaTexto = "1:45.000",
+            EsValida = true,
+            EsMejorVuelta = true
+        }, new List<MuestraTelemetria>());
+        await _repositorioSesiones.FinalizarSesionAsync(sesionRecienteConVueltasId);
+
         await _repositorioSesiones.AsignarUsuarioASesionesSinPilotoAsync(nuevoUsuario);
 
         var sesionCerrada = await _contexto.Sesiones.FindAsync(sesionCerradaId);
         var sesionActiva = await _contexto.Sesiones.FindAsync(sesionActivaId);
+        var sesionRecienteConVueltas = await _contexto.Sesiones.FindAsync(sesionRecienteConVueltasId);
 
-        // La sesión histórica previa sigue siendo huérfana (NULL)
+        // La sesión cerrada vacía sigue siendo huérfana (NULL)
         Assert.Null(sesionCerrada!.UsuarioId);
 
-        // La sesión en curso fue adoptada
+        // La sesión en curso y la tanda recién cerrada con vueltas fueron adoptadas
         Assert.Equal(nuevoUsuario, sesionActiva!.UsuarioId);
+        Assert.Equal(nuevoUsuario, sesionRecienteConVueltas!.UsuarioId);
     }
 
     [Fact]
