@@ -327,6 +327,19 @@ public sealed class LectorAssettoCorsaWin32 : ILectorTelemetria
         in EstructuraGraficaAC grafica,
         int cantidadAutos)
     {
+        // En Assetto Corsa (AC1, SPageFileGraphic v1.7), inmediatamente después de NormalizedCarPosition (offset 248)
+        // se ubica float carCoordinates[3] (X en offset 252, Y en offset 256, Z en offset 260) sin el entero ActiveCars de ACC.
+        if (grafica.ActiveCars < 1 || grafica.ActiveCars > 60)
+        {
+            float xAc1 = BitConverter.Int32BitsToSingle(grafica.ActiveCars);
+            float yAc1 = grafica.CarCoordinates[0];
+            float zAc1 = grafica.CarCoordinates[1];
+            if (float.IsFinite(xAc1) && float.IsFinite(yAc1) && float.IsFinite(zAc1))
+            {
+                return (xAc1, yAc1, zAc1);
+            }
+        }
+
         int indiceAutoJugador = 0;
         for (int indice = 0; indice < cantidadAutos; indice++)
         {
