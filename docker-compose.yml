@@ -1,0 +1,63 @@
+services:
+  # ============================================================================
+  # Motor de Base de Datos Central PostgreSQL (Nivel 2)
+  # ============================================================================
+  postgres:
+    image: postgres:latest
+    pull_policy: missing
+    container_name: apexlink-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-apexlink}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./backend/scripts/esquema-postgresql-central.sql:/docker-entrypoint-initdb.d/01-esquema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-apexlink}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - apexlink-network
+
+  # ============================================================================
+  # Herramienta Visual de Administración: pgAdmin 4 (Opcional)
+  # Se inicia usando: docker compose --profile tools up -d
+  # ============================================================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: apexlink-pgadmin
+    restart: unless-stopped
+    profiles:
+      - tools
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@apexlink.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - apexlink-network
+
+volumes:
+  postgres_data:
+    name: apexlink_postgres_data
+    driver: local
+  pgadmin_data:
+    name: apexlink_pgadmin_data
+    driver: local
+
+networks:
+  apexlink-network:
+    name: apexlink_red_central
+    driver: bridge

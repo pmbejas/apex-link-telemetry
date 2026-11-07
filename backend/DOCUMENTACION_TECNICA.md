@@ -7146,3 +7146,91 @@ Con esta corrección:
 1. Activar el limitador de velocidad en cualquier sector despliega inmediatamente el cartel a pantalla completa en cian (`PIT LIMITER ON`) con marcha y velocímetro comparativo (/ 80 km/h).
 2. Desactivarlo en el carril de boxes rodando a velocidad despliega la advertencia roja pulsante (`PIT LIMITER OFF`).
 3. En menús de pausa o con el coche detenido, el overlay permanece oculto.
+
+
+---
+
+## 🐳 13. Entorno Contenerizado de Base de Datos Central PostgreSQL (Docker Compose)
+
+### 13.1. Propósito y Fundamentación de la Infraestructura
+Para dar soporte a la sincronización asíncrona de datos en segundo plano (*Store-and-Forward* desde el nodo Edge SQLite hacia el Servidor Central Nivel 2), se diseñó e implementó una infraestructura contenerizada y reproducible basada en **Docker Compose**. Esta infraestructura garantiza:
+1. **Desacoplamiento Operacional:** La base de datos central y sus herramientas visuales se ejecutan de manera aislada, sin requerir la instalación manual de binarios del motor de base de datos en el sistema operativo anfitrión.
+2. **Inmutabilidad y Automatización:** El esquema de datos en Tercera Forma Normal (3FN), extensiones criptográficas (`pgcrypto`), índices B-Tree/BRIN y tablas de control de acceso RBAC se provisionan de forma completamente autónoma en el primer arranque del contenedor.
+3. **Persistencia y Seguridad:** La información de telemetría y credenciales se preserva en volúmenes Docker dedicados (`apexlink_postgres_data`), mientras que las claves y puertos se configuran externamente mediante variables de entorno en `.env` (siguiendo las directivas de seguridad para evitar secrets hardcodeados).
+
+---
+
+### 13.2. Arquitectura de Servicios y Redes
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        Red Puente: apexlink_red_central                │
+│                                                                        │
+│   ┌───────────────────────────┐         ┌──────────────────────────┐   │
+│   │   apexlink-postgres       │ ◄────── │   apexlink-pgadmin       │   │
+│   │   (postgres:17-alpine)    │         │   (dpage/pgadmin4)       │   │
+│   │   Puerto: 5432            │         │   Puerto: 5050           │   │
+│   │   Healthcheck: pg_isready │         │   Perfil: tools          │   │
+│   └─────────────┬─────────────┘         └────────────┬─────────────┘   │
+└─────────────────┼────────────────────────────────────┼─────────────────┘
+                  │                                    │
+                  ▼                                    ▼
+       Volumen: apexlink_postgres_data     Volumen: apexlink_pgadmin_data
+                  │
+                  ▼
+  Bind Mount: esquema-postgresql-central.sql -> /docker-entrypoint-initdb.d/
+```
+
+#### A. Servicio `postgres`
+- **Imagen Base:** `postgres:latest` (PostgreSQL 18.x) con política `pull_policy: missing`. Aprovecha la imagen oficial localmente disponible sin depender de descargas bloqueadas hacia el registro remoto de Docker Hub.
+- **Contenedor:** `apexlink-postgres`.
+- **Variables de Configuración:**
+  - `POSTGRES_DB`: Base de datos central asignada (`apexlink`), consumida por el worker de sincronización en segundo plano de .NET.
+  - `POSTGRES_USER` y `POSTGRES_PASSWORD`: Credenciales de acceso leídas desde las variables de entorno locales `.env` (por defecto `postgres` / `postgres`).
+  - `PGDATA`: `/var/lib/postgresql/data/pgdata`, asegurando una separación adecuada del subdirectorio de datos respecto a la raíz del volumen.
+- **Aprovisionamiento Automático (`/docker-entrypoint-initdb.d/`):**
+  - Se vincula en modo solo lectura (`:ro`) el archivo [`backend/scripts/esquema-postgresql-central.sql`](file:///C:/Users/Usuario/Desktop/apex-link-telemetry/backend/scripts/esquema-postgresql-central.sql) hacia `/docker-entrypoint-initdb.d/01-esquema.sql`.
+  - El punto de entrada oficial de PostgreSQL ejecuta automáticamente este script durante el primer inicio, creando las tablas `roles`, `permisos`, `roles_permisos`, `usuarios`, `usuarios_roles`, `sesiones`, `vueltas` y `telemetria_vueltas`, junto con sus índices analíticos y semillas RBAC.
+- **Monitoreo de Salud (*Healthcheck*):**
+  - Ejecuta `pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}` cada 5 segundos (con hasta 5 reintentos y 10 segundos de gracia inicial), permitiendo a servicios dependientes verificar la disponibilidad real del socket antes de conectarse.
+
+#### B. Servicio `pgadmin` (Herramienta Visual Opcional)
+- **Imagen Base:** `dpage/pgadmin4:latest`.
+- **Contenedor:** `apexlink-pgadmin`.
+- **Perfil de Ejecución:** `tools`. Al estar asignado a un perfil, el servicio no se inicia con `docker compose up` estándar, evitando el consumo de memoria RAM (~350 MB) cuando solo se necesita el motor PostgreSQL. Para iniciarlo junto con la base de datos se utiliza la bandera `--profile tools`.
+- **Dependencia Condicional:** `depends_on: postgres` con condición `service_healthy`. pgAdmin espera a que PostgreSQL acepte conexiones antes de arrancar.
+- **Acceso Web:** Mapeado al puerto `5050` del anfitrión (`http://localhost:5050`), con credenciales parametrizables en `.env` (`admin@apexlink.local` / `admin`).
+
+#### C. Volúmenes y Red
+- `apexlink_postgres_data`: Volumen administrado de almacenamiento persistente para los archivos de datos de PostgreSQL.
+- `apexlink_pgadmin_data`: Volumen para la persistencia de configuraciones, sesiones y conexiones guardadas en pgAdmin.
+- `apexlink_red_central`: Red virtual de tipo puente (*bridge*) que permite la resolución de nombres DNS interna entre contenedores (`postgres:5432`).
+
+---
+
+### 13.3. Guía de Uso Operacional
+
+1. **Iniciar únicamente el motor PostgreSQL (Modo estándar):**
+   ```powershell
+   docker compose up -d
+   ```
+
+2. **Iniciar PostgreSQL junto con la interfaz web pgAdmin:**
+   ```powershell
+   docker compose --profile tools up -d
+   ```
+
+3. **Verificar el estado de salud de los contenedores:**
+   ```powershell
+   docker compose ps
+   ```
+
+4. **Consultar registros de ejecución (*logs*):**
+   ```powershell
+   docker compose logs -f postgres
+   ```
+
+5. **Detener y apagar los servicios preservando los datos:**
+   ```powershell
+   docker compose --profile tools down
+   ```

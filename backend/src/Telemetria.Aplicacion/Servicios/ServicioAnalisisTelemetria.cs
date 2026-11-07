@@ -255,7 +255,7 @@ public sealed class ServicioAnalisisTelemetria : IServicioAnalisisTelemetria
 
         if (vueltasReales.Count == 0)
         {
-            return baseReferencia.Take(Math.Max(1, limite)).ToList();
+            return new List<LeaderboardItemDto>();
         }
 
         var guidPilotoDefault = Guid.Parse("11111111-1111-1111-1111-111111111111");
@@ -296,14 +296,6 @@ public sealed class ServicioAnalisisTelemetria : IServicioAnalisisTelemetria
                 Vueltas = entrada.TotalVueltas,
                 EsRecord = false
             });
-        }
-
-        foreach (var itemBase in baseReferencia)
-        {
-            if (!aliasesReales.Contains(itemBase.Alias))
-            {
-                itemsCombinados.Add(itemBase);
-            }
         }
 
         var ordenados = itemsCombinados
@@ -369,35 +361,6 @@ public sealed class ServicioAnalisisTelemetria : IServicioAnalisisTelemetria
 
     private static List<LeaderboardItemDto> ObtenerLeaderboardBase(string circuito)
     {
-        string c = circuito.ToLowerInvariant();
-        if (c.Contains("spa"))
-        {
-            return new List<LeaderboardItemDto>
-            {
-                new() { Posicion = 1, Piloto = "Alejo Garlati (Pro)", Alias = "AG_PRO", Tiempo = "01:42.550", TiempoMs = 102550, Delta = "Ref", Auto = "Ferrari SF70H", Circuito = "Circuit de Spa-Francorchamps", Vueltas = 14, EsRecord = true },
-                new() { Posicion = 2, Piloto = "Martin Basso (Sim)", Alias = "MB_SIM", Tiempo = "01:43.820", TiempoMs = 103820, Delta = "+1.270 s", Auto = "Ferrari SF70H", Circuito = "Circuit de Spa-Francorchamps", Vueltas = 10, EsRecord = false },
-                new() { Posicion = 3, Piloto = "Piloto Invitado (FAPPE)", Alias = "PILOTO_01", Tiempo = "01:45.310", TiempoMs = 105310, Delta = "+2.760 s", Auto = "Ferrari 488 GT3", Circuito = "Circuit de Spa-Francorchamps", Vueltas = 7, EsRecord = false },
-            };
-        }
-
-        if (c.Contains("redbull") || c.Contains("spielberg"))
-        {
-            return new List<LeaderboardItemDto>
-            {
-                new() { Posicion = 1, Piloto = "Alejo Garlati (Pro)", Alias = "AG_PRO", Tiempo = "01:05.410", TiempoMs = 65410, Delta = "Ref", Auto = "Ferrari SF70H", Circuito = "Red Bull Ring (Spielberg)", Vueltas = 16, EsRecord = true },
-                new() { Posicion = 2, Piloto = "Franco Colapinto (Sim)", Alias = "FC_SIM", Tiempo = "01:06.120", TiempoMs = 66120, Delta = "+0.710 s", Auto = "Ferrari SF70H", Circuito = "Red Bull Ring (Spielberg)", Vueltas = 12, EsRecord = false },
-                new() { Posicion = 3, Piloto = "Piloto Invitado (FAPPE)", Alias = "PILOTO_01", Tiempo = "01:07.890", TiempoMs = 67890, Delta = "+2.480 s", Auto = "BMW M2 CS Racing", Circuito = "Red Bull Ring (Spielberg)", Vueltas = 9, EsRecord = false },
-            };
-        }
-
-        // Predeterminado Monza
-        return new List<LeaderboardItemDto>
-        {
-            new() { Posicion = 1, Piloto = "Alejo Garlati (Piloto Pro)", Alias = "AG_PRO", Tiempo = "01:21.240", TiempoMs = 81240, Delta = "Ref", Auto = "Ferrari SF70H", Circuito = "Autodromo Nazionale Monza", Vueltas = 18, EsRecord = true },
-            new() { Posicion = 2, Piloto = "Martin Basso (Sim Pro)", Alias = "MB_SIM", Tiempo = "01:22.450", TiempoMs = 82450, Delta = "+1.210 s", Auto = "Ferrari SF70H", Circuito = "Autodromo Nazionale Monza", Vueltas = 8, EsRecord = false },
-            new() { Posicion = 3, Piloto = "Lucas Di Grassi (GT3)", Alias = "LDG_GT3", Tiempo = "01:24.110", TiempoMs = 84110, Delta = "+2.870 s", Auto = "Ferrari SF70H", Circuito = "Autodromo Nazionale Monza", Vueltas = 14, EsRecord = false },
-            new() { Posicion = 4, Piloto = "Franco Colapinto (Sim)", Alias = "FC_SIM", Tiempo = "01:25.890", TiempoMs = 85890, Delta = "+4.650 s", Auto = "Ferrari SF70H", Circuito = "Autodromo Nazionale Monza", Vueltas = 6, EsRecord = false },
-            new() { Posicion = 5, Piloto = "Piloto Invitado (Demo)", Alias = "PILOTO_01", Tiempo = "01:27.420", TiempoMs = 87420, Delta = "+6.180 s", Auto = "Ferrari SF70H", Circuito = "Autodromo Nazionale Monza", Vueltas = 5, EsRecord = false },
-        };
+        return new List<LeaderboardItemDto>();
     }
 }
