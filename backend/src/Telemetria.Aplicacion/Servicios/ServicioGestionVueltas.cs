@@ -39,10 +39,30 @@ public sealed class ServicioGestionVueltas : BackgroundService, IControlPilotoAc
     private bool _modoMockActivo = false;
     private int _numeroVueltaActual = -1;
     private int _mejorTiempoSesionMs = 0;
+    private SesionFinalizadaTorneoDto? _ultimaSesionFinalizadaPendiente;
 
     public Guid? PilotoActivoId => _pilotoActivoId;
     public string PilotoActivoNombre => _pilotoActivoNombre;
     public string PilotoActivoAlias => _pilotoActivoAlias;
+
+    public SesionFinalizadaTorneoDto? ObtenerSesionFinalizadaPendiente() => _ultimaSesionFinalizadaPendiente;
+
+    public void ConfirmarSesionFinalizadaPendiente(Guid sesionId)
+    {
+        if (_ultimaSesionFinalizadaPendiente?.SesionId == sesionId)
+        {
+            _ultimaSesionFinalizadaPendiente = null;
+        }
+    }
+
+    public async Task<SesionFinalizadaTorneoDto?> ForzarCierreSesionActivaAsync(CancellationToken token = default)
+    {
+        if (_sesionActivaId.HasValue)
+        {
+            await CerrarSesionSiEstabaActivaAsync(token);
+        }
+        return _ultimaSesionFinalizadaPendiente;
+    }
 
     public ServicioGestionVueltas(
         ChannelReader<CuadroTelemetria> canalLector,
@@ -355,12 +375,39 @@ public sealed class ServicioGestionVueltas : BackgroundService, IControlPilotoAc
             return;
         }
 
+        Guid sesionCerradaId = _sesionActivaId.Value;
         try
         {
             using var alcance = _factoriaAlcances.CreateScope();
             var repositorioSesiones = alcance.ServiceProvider.GetRequiredService<IRepositorioSesionesLocal>();
-            await repositorioSesiones.FinalizarSesionAsync(_sesionActivaId.Value, token);
-            _logger.LogInformation("Sesión de telemetría finalizada: {SesionId}", _sesionActivaId.Value);
+            await repositorioSesiones.FinalizarSesionAsync(sesionCerradaId, token);
+
+            var sesionFinalizada = await repositorioSesiones.ObtenerSesionConVueltasPorIdAsync(sesionCerradaId, token);
+            if (sesionFinalizada != null && sesionFinalizada.Vueltas != null)
+            {
+                var vueltasValidas = sesionFinalizada.Vueltas
+                    .Where(v => v.EsValida && v.TiempoVueltaMs > 0)
+                    .OrderBy(v => v.TiempoVueltaMs)
+                    .ToList();
+
+                if (vueltasValidas.Count > 0)
+                {
+                    var mejorVuelta = vueltasValidas[0];
+                    _ultimaSesionFinalizadaPendiente = new SesionFinalizadaTorneoDto
+                    {
+                        SesionId = sesionFinalizada.Id,
+                        Circuito = sesionFinalizada.Circuito,
+                        ModeloVehiculo = ServicioAnalisisTelemetria.FormatearNombreVehiculo(sesionFinalizada.ModeloVehiculo),
+                        TotalVueltas = sesionFinalizada.TotalVueltas,
+                        VueltasValidas = vueltasValidas.Count,
+                        MejorTiempoMs = mejorVuelta.TiempoVueltaMs,
+                        MejorTiempoTexto = mejorVuelta.TiempoVueltaTexto,
+                        FechaFin = sesionFinalizada.FechaFin ?? DateTimeOffset.UtcNow
+                    };
+                }
+            }
+
+            _logger.LogInformation("Sesión de telemetría finalizada: {SesionId}", sesionCerradaId);
             _sesionActivaId = null;
         }
         catch (Exception excepcion)

@@ -305,4 +305,52 @@ public sealed class RepositorioSesionesSqlite : IRepositorioSesionesLocal
             throw;
         }
     }
+
+    public async Task<Sesion?> ObtenerSesionConVueltasPorIdAsync(
+        Guid sesionId,
+        CancellationToken tokenCancelacion = default)
+    {
+        try
+        {
+            return await _contexto.Sesiones
+                .AsNoTracking()
+                .Include(sesion => sesion.Vueltas)
+                .FirstOrDefaultAsync(sesion => sesion.Id == sesionId, tokenCancelacion);
+        }
+        catch (Exception excepcion)
+        {
+            _logger.LogError(excepcion, "Error al consultar la sesión {SesionId} con sus vueltas en SQLite.", sesionId);
+            throw;
+        }
+    }
+
+    public async Task<Sesion?> ReasignarUsuarioSesionAsync(
+        Guid sesionId,
+        Guid nuevoUsuarioId,
+        CancellationToken tokenCancelacion = default)
+    {
+        try
+        {
+            var sesion = await _contexto.Sesiones
+                .Include(entidad => entidad.Vueltas)
+                .FirstOrDefaultAsync(entidad => entidad.Id == sesionId, tokenCancelacion);
+
+            if (sesion == null)
+            {
+                return null;
+            }
+
+            sesion.UsuarioId = nuevoUsuarioId;
+            sesion.EsSimulacionMock = false;
+            await _contexto.SaveChangesAsync(tokenCancelacion);
+
+            _logger.LogInformation("Sesión {SesionId} reasignada al participante del Torneo FAPPE {UsuarioId}.", sesionId, nuevoUsuarioId);
+            return sesion;
+        }
+        catch (Exception excepcion)
+        {
+            _logger.LogError(excepcion, "Error al reasignar usuario en la sesión {SesionId} en SQLite.", sesionId);
+            throw;
+        }
+    }
 }

@@ -1,6 +1,7 @@
 namespace Telemetria.Aplicacion.Contratos;
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Telemetria.Aplicacion.Dtos.Responses;
@@ -13,6 +14,9 @@ public interface IRepositorioPerfilesPiloto
     Task<PerfilPilotoDetalleDto?> ObtenerPerfilCompletoAsync(
         Guid usuarioId,
         CancellationToken token = default);
+
+    Task<Dictionary<Guid, (string Nombre, string Alias, DateTimeOffset? FechaRegistro)>> ObtenerMapaUsuariosRegistradosAsync(
+        CancellationToken token = default) => Task.FromResult(new Dictionary<Guid, (string Nombre, string Alias, DateTimeOffset? FechaRegistro)>());
 
     Task GuardarEvaluacionAsync(
         Guid usuarioId,

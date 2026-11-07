@@ -39,4 +39,10 @@ public interface IServicioAnalisisTelemetria
         string? circuito,
         int limite = 10,
         CancellationToken tokenCancelacion = default);
+
+    Task<bool> AtribuirSesionParticipanteTorneoAsync(
+        Guid sesionId,
+        bool esParticipanteTorneo,
+        string? nombreParticipante,
+        CancellationToken tokenCancelacion = default) => Task.FromResult(false);
 }

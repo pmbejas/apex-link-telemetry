@@ -170,4 +170,53 @@ public sealed class TelemetriaController : ControllerBase
 
         return Ok(RespuestaApi<bool>.ConstruirExito(true));
     }
+
+    [HttpGet("sesiones/reciente-finalizada")]
+    [HasPermission("sesion:listar")]
+    [ProducesResponseType(typeof(RespuestaApi<SesionFinalizadaTorneoDto?>), StatusCodes.Status200OK)]
+    public ActionResult<RespuestaApi<SesionFinalizadaTorneoDto?>> ObtenerSesionRecienteFinalizada()
+    {
+        var sesionPendiente = _controlPilotoActivo.ObtenerSesionFinalizadaPendiente();
+        return Ok(RespuestaApi<SesionFinalizadaTorneoDto?>.ConstruirExito(sesionPendiente));
+    }
+
+    [HttpPost("sesiones/cerrar-activa")]
+    [HasPermission("sesion:listar")]
+    [ProducesResponseType(typeof(RespuestaApi<SesionFinalizadaTorneoDto?>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<RespuestaApi<SesionFinalizadaTorneoDto?>>> CerrarSesionActiva(
+        CancellationToken tokenCancelacion = default)
+    {
+        var sesionCerrada = await _controlPilotoActivo.ForzarCierreSesionActivaAsync(tokenCancelacion);
+        return Ok(RespuestaApi<SesionFinalizadaTorneoDto?>.ConstruirExito(sesionCerrada));
+    }
+
+    [HttpPost("sesiones/{id:guid}/participante-torneo")]
+    [HasPermission("sesion:listar")]
+    [ProducesResponseType(typeof(RespuestaApi<bool>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(RespuestaApi<bool>), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<RespuestaApi<bool>>> AtribuirSesionParticipanteTorneo(
+        Guid id,
+        [FromBody] AtribuirSesionTorneoRequest request,
+        CancellationToken tokenCancelacion = default)
+    {
+        if (request.EsParticipanteTorneo && string.IsNullOrWhiteSpace(request.NombreParticipante))
+        {
+            return BadRequest(RespuestaApi<bool>.ConstruirFallo(
+                "Debés ingresar el nombre del participante del Torneo FAPPE."));
+        }
+
+        bool exito = await _servicioAnalisis.AtribuirSesionParticipanteTorneoAsync(
+            id,
+            request.EsParticipanteTorneo,
+            request.NombreParticipante,
+            tokenCancelacion);
+
+        if (!exito)
+        {
+            return BadRequest(RespuestaApi<bool>.ConstruirFallo(
+                "No se pudo atribuir la tanda al participante especificado."));
+        }
+
+        return Ok(RespuestaApi<bool>.ConstruirExito(true));
+    }
 }

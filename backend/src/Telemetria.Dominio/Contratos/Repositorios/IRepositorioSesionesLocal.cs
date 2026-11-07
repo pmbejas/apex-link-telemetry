@@ -37,4 +37,10 @@ public interface IRepositorioSesionesLocal
     Task<List<Sesion>> ObtenerSesionesPendientesSincronizacionAsync(CancellationToken tokenCancelacion = default);
 
     Task MarcarComoSincronizadaAsync(Guid sesionId, CancellationToken tokenCancelacion = default);
+
+    Task<Sesion?> ObtenerSesionConVueltasPorIdAsync(Guid sesionId, CancellationToken tokenCancelacion = default) =>
+        Task.FromResult<Sesion?>(null);
+
+    Task<Sesion?> ReasignarUsuarioSesionAsync(Guid sesionId, Guid nuevoUsuarioId, CancellationToken tokenCancelacion = default) =>
+        Task.FromResult<Sesion?>(null);
 }

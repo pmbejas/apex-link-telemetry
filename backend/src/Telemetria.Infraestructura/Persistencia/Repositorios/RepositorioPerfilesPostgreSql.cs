@@ -209,6 +209,44 @@ public sealed class RepositorioPerfilesPostgreSql : IRepositorioPerfilesPiloto
         }
     }
 
+    public async Task<Dictionary<Guid, (string Nombre, string Alias, DateTimeOffset? FechaRegistro)>> ObtenerMapaUsuariosRegistradosAsync(
+        CancellationToken token = default)
+    {
+        var resultado = new Dictionary<Guid, (string Nombre, string Alias, DateTimeOffset? FechaRegistro)>();
+        string? cadena = _configuracion.GetConnectionString("ServidorCentralPostgreSql");
+        if (string.IsNullOrWhiteSpace(cadena))
+        {
+            return resultado;
+        }
+
+        try
+        {
+            await using var conexion = new NpgsqlConnection(cadena);
+            await conexion.OpenAsync(token);
+
+            const string sql = @"
+                SELECT id, nombre_completo, alias_piloto, created_at
+                FROM usuarios;";
+
+            await using var cmd = new NpgsqlCommand(sql, conexion);
+            await using var lector = await cmd.ExecuteReaderAsync(token);
+            while (await lector.ReadAsync(token))
+            {
+                Guid id = lector.GetGuid(0);
+                string nombre = lector.IsDBNull(1) ? "Piloto" : lector.GetString(1);
+                string alias = lector.IsDBNull(2) ? "PILOTO" : lector.GetString(2);
+                DateTimeOffset? fechaRegistro = lector.IsDBNull(3) ? null : lector.GetFieldValue<DateTimeOffset>(3);
+                resultado[id] = (nombre, alias, fechaRegistro);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "No se pudo consultar el mapa de usuarios registrados en PostgreSQL.");
+        }
+
+        return resultado;
+    }
+
     public async Task GuardarEvaluacionAsync(
         Guid usuarioId,
         EvaluacionRendimientoDto evaluacion,

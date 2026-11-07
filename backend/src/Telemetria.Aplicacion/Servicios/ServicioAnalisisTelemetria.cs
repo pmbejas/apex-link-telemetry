@@ -2,7 +2,9 @@ namespace Telemetria.Aplicacion.Servicios;
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Telemetria.Aplicacion.Common;
@@ -25,15 +27,31 @@ public sealed class ServicioAnalisisTelemetria : IServicioAnalisisTelemetria
     private const float DISTANCIA_MINIMA_INTERPOLACION_METROS = 0.001f;
     private const double MILISEGUNDOS_POR_SEGUNDO = 1000.0;
 
+    private static readonly string RutaParticipantesTorneo = Path.Combine(AppContext.BaseDirectory, "participantes_torneo_fappe.json");
+    private static readonly object _bloqueoParticipantesTorneo = new();
+
+    private sealed record ParticipanteTorneoPersistido(
+        Guid UsuarioId,
+        Guid SesionId,
+        string Nombre,
+        string Alias,
+        DateTimeOffset FechaRegistro);
+
     private readonly IRepositorioSesionesLocal _repositorioSesiones;
     private readonly IRepositorioVueltasLocal _repositorioVueltas;
+    private readonly IRepositorioPerfilesPiloto? _repositorioPerfiles;
+    private readonly IControlPilotoActivo? _controlPilotoActivo;
 
     public ServicioAnalisisTelemetria(
         IRepositorioSesionesLocal repositorioSesiones,
-        IRepositorioVueltasLocal repositorioVueltas)
+        IRepositorioVueltasLocal repositorioVueltas,
+        IRepositorioPerfilesPiloto? repositorioPerfiles = null,
+        IControlPilotoActivo? controlPilotoActivo = null)
     {
         _repositorioSesiones = repositorioSesiones;
         _repositorioVueltas = repositorioVueltas;
+        _repositorioPerfiles = repositorioPerfiles;
+        _controlPilotoActivo = controlPilotoActivo;
     }
 
     public async Task<PaginacionRespuesta<SesionResumenDto>> ObtenerSesionesPaginadasAsync(
@@ -239,6 +257,57 @@ public sealed class ServicioAnalisisTelemetria : IServicioAnalisisTelemetria
         };
     }
 
+    public async Task<bool> AtribuirSesionParticipanteTorneoAsync(
+        Guid sesionId,
+        bool esParticipanteTorneo,
+        string? nombreParticipante,
+        CancellationToken tokenCancelacion = default)
+    {
+        if (sesionId == Guid.Empty)
+        {
+            return false;
+        }
+
+        _controlPilotoActivo?.ConfirmarSesionFinalizadaPendiente(sesionId);
+
+        if (!esParticipanteTorneo)
+        {
+            return true;
+        }
+
+        string nombreLimpio = (nombreParticipante ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(nombreLimpio))
+        {
+            return false;
+        }
+
+        var participantesActuales = CargarParticipantesTorneo();
+        var existenteMismoNombre = participantesActuales.FirstOrDefault(p =>
+            string.Equals(p.Nombre, nombreLimpio, StringComparison.OrdinalIgnoreCase));
+
+        Guid usuarioTorneoId = existenteMismoNombre?.UsuarioId ?? Guid.NewGuid();
+        string aliasTorneo = existenteMismoNombre?.Alias ?? GenerarAliasTorneo(nombreLimpio);
+
+        var sesionActualizada = await _repositorioSesiones.ReasignarUsuarioSesionAsync(
+            sesionId,
+            usuarioTorneoId,
+            tokenCancelacion);
+
+        if (sesionActualizada == null)
+        {
+            return false;
+        }
+
+        GuardarParticipanteTorneo(new ParticipanteTorneoPersistido(
+            usuarioTorneoId,
+            sesionId,
+            nombreLimpio,
+            aliasTorneo,
+            DateTimeOffset.UtcNow));
+
+        return true;
+    }
+
     public async Task<List<LeaderboardItemDto>> ObtenerLeaderboardAsync(
         string? circuito,
         int limite = 10,
@@ -248,55 +317,127 @@ public sealed class ServicioAnalisisTelemetria : IServicioAnalisisTelemetria
         var vueltas = await _repositorioVueltas.ObtenerMejoresVueltasPorCircuitoAsync(circuitoFiltro, limite, tokenCancelacion);
 
         var vueltasReales = vueltas
-            .Where(v => v.Sesion == null || !v.Sesion.EsSimulacionMock)
+            .Where(v => v.EsValida && v.TiempoVueltaMs > 0 && (v.Sesion == null || !v.Sesion.EsSimulacionMock))
             .ToList();
-
-        var baseReferencia = ObtenerLeaderboardBase(circuitoFiltro);
 
         if (vueltasReales.Count == 0)
         {
             return new List<LeaderboardItemDto>();
         }
 
-        var guidPilotoDefault = Guid.Parse("11111111-1111-1111-1111-111111111111");
-        var mejoresPorPiloto = vueltasReales
-            .GroupBy(v => v.Sesion?.UsuarioId ?? guidPilotoDefault)
+        var participantesTorneo = CargarParticipantesTorneo();
+        var torneoPorUsuario = participantesTorneo
+            .GroupBy(p => p.UsuarioId)
+            .ToDictionary(g => g.Key, g => g.Last());
+        var torneoPorSesion = participantesTorneo
+            .GroupBy(p => p.SesionId)
+            .ToDictionary(g => g.Key, g => g.Last());
+
+        var usuariosRegistrados = _repositorioPerfiles != null
+            ? await _repositorioPerfiles.ObtenerMapaUsuariosRegistradosAsync(tokenCancelacion)
+            : new Dictionary<Guid, (string Nombre, string Alias, DateTimeOffset? FechaRegistro)>();
+
+        if (_controlPilotoActivo?.PilotoActivoId is Guid activoId &&
+            activoId != Guid.Empty &&
+            !usuariosRegistrados.ContainsKey(activoId) &&
+            !string.IsNullOrWhiteSpace(_controlPilotoActivo.PilotoActivoNombre))
+        {
+            usuariosRegistrados[activoId] = (
+                _controlPilotoActivo.PilotoActivoNombre,
+                string.IsNullOrWhiteSpace(_controlPilotoActivo.PilotoActivoAlias) ? "PILOTO" : _controlPilotoActivo.PilotoActivoAlias,
+                null);
+        }
+
+        bool modoFiltroEstrictoUsuarios = _repositorioPerfiles != null && (usuariosRegistrados.Count > 0 || participantesTorneo.Count > 0);
+
+        var vueltasClasificables = new List<(Guid UsuarioId, string Nombre, string Alias, Vuelta Vuelta)>();
+
+        foreach (var vuelta in vueltasReales)
+        {
+            Guid? sesionId = vuelta.Sesion?.Id ?? (vuelta.SesionId != Guid.Empty ? vuelta.SesionId : null);
+            Guid? usuarioId = vuelta.Sesion?.UsuarioId;
+
+            if (sesionId.HasValue && torneoPorSesion.TryGetValue(sesionId.Value, out var partPorSesion))
+            {
+                vueltasClasificables.Add((partPorSesion.UsuarioId, partPorSesion.Nombre, partPorSesion.Alias, vuelta));
+                continue;
+            }
+
+            if (usuarioId.HasValue && torneoPorUsuario.TryGetValue(usuarioId.Value, out var partPorUsuario))
+            {
+                vueltasClasificables.Add((partPorUsuario.UsuarioId, partPorUsuario.Nombre, partPorUsuario.Alias, vuelta));
+                continue;
+            }
+
+            if (modoFiltroEstrictoUsuarios)
+            {
+                if (!usuarioId.HasValue || usuarioId.Value == Guid.Empty)
+                {
+                    continue;
+                }
+
+                string idStr = usuarioId.Value.ToString();
+                if (idStr.StartsWith("00000000") || idStr.StartsWith("11111111") || idStr.StartsWith("22222222"))
+                {
+                    continue;
+                }
+
+                if (!usuariosRegistrados.TryGetValue(usuarioId.Value, out var infoUsuario))
+                {
+                    continue;
+                }
+
+                if (infoUsuario.FechaRegistro.HasValue &&
+                    vuelta.Sesion != null &&
+                    vuelta.Sesion.FechaInicio < infoUsuario.FechaRegistro.Value.AddMinutes(-15))
+                {
+                    continue;
+                }
+
+                vueltasClasificables.Add((usuarioId.Value, infoUsuario.Nombre, infoUsuario.Alias, vuelta));
+            }
+            else
+            {
+                Guid idFallback = usuarioId ?? Guid.Parse("11111111-1111-1111-1111-111111111111");
+                var (nombreFallback, aliasFallback) = ObtenerNombrePiloto(idFallback, 0);
+                vueltasClasificables.Add((idFallback, nombreFallback, aliasFallback, vuelta));
+            }
+        }
+
+        if (vueltasClasificables.Count == 0)
+        {
+            return new List<LeaderboardItemDto>();
+        }
+
+        var itemsCombinados = vueltasClasificables
+            .GroupBy(x => x.UsuarioId)
             .Select(grupo =>
             {
-                var mejorVuelta = grupo.OrderBy(v => v.TiempoVueltaMs).First();
-                int totalVueltasPiloto = grupo
-                    .Where(v => v.Sesion != null)
-                    .Select(v => v.Sesion!)
-                    .DistinctBy(s => s.Id)
-                    .Sum(s => Math.Max(1, s.TotalVueltas));
-                if (totalVueltasPiloto == 0) totalVueltasPiloto = grupo.Count();
-                return (UsuarioId: grupo.Key, MejorVuelta: mejorVuelta, TotalVueltas: totalVueltasPiloto);
+                var mejorEntrada = grupo.OrderBy(x => x.Vuelta.TiempoVueltaMs).First();
+                int vueltasLimpiasPiloto = grupo
+                    .Select(x => x.Vuelta.Id)
+                    .Distinct()
+                    .Count();
+                if (vueltasLimpiasPiloto == 0)
+                {
+                    vueltasLimpiasPiloto = grupo.Count();
+                }
+
+                return new LeaderboardItemDto
+                {
+                    Posicion = 0,
+                    Piloto = mejorEntrada.Nombre,
+                    Alias = mejorEntrada.Alias,
+                    Tiempo = mejorEntrada.Vuelta.TiempoVueltaTexto,
+                    TiempoMs = mejorEntrada.Vuelta.TiempoVueltaMs,
+                    Delta = "Ref",
+                    Auto = FormatearNombreVehiculo(mejorEntrada.Vuelta.Sesion?.ModeloVehiculo),
+                    Circuito = mejorEntrada.Vuelta.Sesion?.Circuito ?? circuitoFiltro,
+                    Vueltas = vueltasLimpiasPiloto,
+                    EsRecord = false
+                };
             })
             .ToList();
-
-        var itemsCombinados = new List<LeaderboardItemDto>();
-        var aliasesReales = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        for (int i = 0; i < mejoresPorPiloto.Count; i++)
-        {
-            var entrada = mejoresPorPiloto[i];
-            var (nombrePiloto, aliasPiloto) = ObtenerNombrePiloto(entrada.UsuarioId, i);
-            aliasesReales.Add(aliasPiloto);
-
-            itemsCombinados.Add(new LeaderboardItemDto
-            {
-                Posicion = 0,
-                Piloto = nombrePiloto,
-                Alias = aliasPiloto,
-                Tiempo = entrada.MejorVuelta.TiempoVueltaTexto,
-                TiempoMs = entrada.MejorVuelta.TiempoVueltaMs,
-                Delta = "Ref",
-                Auto = FormatearNombreVehiculo(entrada.MejorVuelta.Sesion?.ModeloVehiculo),
-                Circuito = entrada.MejorVuelta.Sesion?.Circuito ?? circuitoFiltro,
-                Vueltas = entrada.TotalVueltas,
-                EsRecord = false
-            });
-        }
 
         var ordenados = itemsCombinados
             .OrderBy(item => item.TiempoMs > 0 ? item.TiempoMs : int.MaxValue)
@@ -318,6 +459,60 @@ public sealed class ServicioAnalisisTelemetria : IServicioAnalisisTelemetria
             Vueltas = item.Vueltas,
             EsRecord = idx == 0
         }).ToList();
+    }
+
+    private static List<ParticipanteTorneoPersistido> CargarParticipantesTorneo()
+    {
+        lock (_bloqueoParticipantesTorneo)
+        {
+            if (!File.Exists(RutaParticipantesTorneo))
+            {
+                return new List<ParticipanteTorneoPersistido>();
+            }
+
+            try
+            {
+                string json = File.ReadAllText(RutaParticipantesTorneo);
+                return JsonSerializer.Deserialize<List<ParticipanteTorneoPersistido>>(json) ?? new List<ParticipanteTorneoPersistido>();
+            }
+            catch
+            {
+                return new List<ParticipanteTorneoPersistido>();
+            }
+        }
+    }
+
+    private static void GuardarParticipanteTorneo(ParticipanteTorneoPersistido nuevoParticipante)
+    {
+        lock (_bloqueoParticipantesTorneo)
+        {
+            var lista = CargarParticipantesTorneo();
+            lista.RemoveAll(p => p.SesionId == nuevoParticipante.SesionId);
+            lista.Add(nuevoParticipante);
+
+            try
+            {
+                File.WriteAllText(RutaParticipantesTorneo, JsonSerializer.Serialize(lista));
+            }
+            catch
+            {
+                // Ignorar fallos de escritura en entornos de solo lectura
+            }
+        }
+    }
+
+    private static string GenerarAliasTorneo(string nombre)
+    {
+        var partes = nombre
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (partes.Length >= 2)
+        {
+            return $"{char.ToUpperInvariant(partes[0][0])}{char.ToUpperInvariant(partes[1][0])}_FAPPE";
+        }
+
+        string prefijo = new string(nombre.Where(char.IsLetterOrDigit).Take(3).ToArray()).ToUpperInvariant();
+        return string.IsNullOrWhiteSpace(prefijo) ? "FAPPE" : $"{prefijo}_FAPPE";
     }
 
     private static (string Piloto, string Alias) ObtenerNombrePiloto(Guid? usuarioId, int indice)

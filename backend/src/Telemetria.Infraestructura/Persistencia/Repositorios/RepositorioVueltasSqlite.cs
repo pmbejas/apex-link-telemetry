@@ -186,7 +186,7 @@ public sealed class RepositorioVueltasSqlite : IRepositorioVueltasLocal
                                  vuelta.EsValida &&
                                  vuelta.TiempoVueltaMs > 0)
                 .OrderBy(vuelta => vuelta.TiempoVueltaMs)
-                .Take(Math.Max(1, limite * 5))
+                .Take(Math.Max(500, limite * 50))
                 .ToListAsync(tokenCancelacion);
         }
         catch (Exception excepcion)
