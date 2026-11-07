@@ -60,6 +60,9 @@ public sealed record PerfilPilotoDetalleDto
     [JsonPropertyName("email")]
     public string Email { get; init; } = string.Empty;
 
+    [JsonPropertyName("fechaRegistro")]
+    public DateTimeOffset? FechaRegistro { get; init; }
+
     [JsonPropertyName("licencia")]
     public string Licencia { get; init; } = string.Empty;
 

@@ -77,6 +77,14 @@ public sealed class PilotosController : ControllerBase
             sesionesValidas = sesiones.Where(s => s.TotalVueltas > 0).ToList();
         }
 
+        // Si el usuario no es admin y posee fecha de registro oficial, descartar sesiones locales con FechaInicio anterior
+        if (perfilBase.FechaRegistro.HasValue && !esAdmin)
+        {
+            sesionesValidas = sesionesValidas
+                .Where(s => s.FechaInicio >= perfilBase.FechaRegistro.Value)
+                .ToList();
+        }
+
         if (sesionesValidas.Count == 0)
         {
             return perfilBase;

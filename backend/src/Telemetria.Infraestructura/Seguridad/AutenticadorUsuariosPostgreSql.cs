@@ -211,6 +211,7 @@ public sealed class AutenticadorUsuariosPostgreSql : IAutenticadorUsuarios
                 Nombre = nombre,
                 Alias = alias,
                 Email = email,
+                FechaRegistro = DateTimeOffset.UtcNow,
                 Licencia = "Licencia Apex Rookie",
                 Nacionalidad = nacionalidad,
                 CodigoPais = codigoPais,

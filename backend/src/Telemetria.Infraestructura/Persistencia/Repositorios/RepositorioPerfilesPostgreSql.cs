@@ -44,7 +44,8 @@ public sealed class RepositorioPerfilesPostgreSql : IRepositorioPerfilesPiloto
                 SELECT u.id, u.nombre_completo, u.alias_piloto, u.email,
                        p.licencia, p.nacionalidad, p.codigo_pais, p.vehiculo_principal, p.simulador_principal,
                        p.pace_rating, p.safety_rating, p.nivel, p.puntaje_general,
-                       p.vueltas_totales, p.kilometros_totales
+                       p.vueltas_totales, p.kilometros_totales,
+                       u.created_at
                 FROM usuarios u
                 LEFT JOIN perfiles_piloto p ON u.id = p.usuario_id
                 WHERE u.id = @UsuarioId
@@ -65,6 +66,7 @@ public sealed class RepositorioPerfilesPostgreSql : IRepositorioPerfilesPiloto
                 Nombre = lector.GetString(1),
                 Alias = lector.GetString(2),
                 Email = lector.GetString(3),
+                FechaRegistro = lector.IsDBNull(15) ? null : lector.GetFieldValue<DateTimeOffset>(15),
                 Licencia = lector.IsDBNull(4) ? "Licencia Apex SimRacing" : lector.GetString(4),
                 Nacionalidad = lector.IsDBNull(5) ? "Argentina" : lector.GetString(5),
                 CodigoPais = lector.IsDBNull(6) ? "ARG" : lector.GetString(6),

@@ -108,7 +108,7 @@ public sealed class RepositorioSesionesSqlite : IRepositorioSesionesLocal
             var query = _contexto.Sesiones.AsNoTracking();
             if (usuarioId.HasValue && usuarioId.Value != Guid.Empty)
             {
-                query = query.Where(sesion => sesion.UsuarioId == usuarioId.Value || (sesion.UsuarioId == null && !sesion.EsSimulacionMock));
+                query = query.Where(sesion => sesion.UsuarioId == usuarioId.Value);
             }
 
             return await query
@@ -133,7 +133,7 @@ public sealed class RepositorioSesionesSqlite : IRepositorioSesionesLocal
             var query = _contexto.Sesiones.AsNoTracking();
             if (usuarioId.HasValue && usuarioId.Value != Guid.Empty)
             {
-                query = query.Where(sesion => sesion.UsuarioId == usuarioId.Value || (sesion.UsuarioId == null && !sesion.EsSimulacionMock));
+                query = query.Where(sesion => sesion.UsuarioId == usuarioId.Value);
             }
 
             return await query.CountAsync(tokenCancelacion);
@@ -196,8 +196,11 @@ public sealed class RepositorioSesionesSqlite : IRepositorioSesionesLocal
 
         try
         {
+            // Solo adoptar sesiones en curso en el simulador activo (FechaFin == null) iniciadas recientemente
+            // Jamás adoptar sesiones históricas cerradas de fechas o tandas anteriores
+            var umbralReciente = DateTimeOffset.UtcNow.AddMinutes(-15);
             var sesionesHuerfanas = await _contexto.Sesiones
-                .Where(s => s.UsuarioId == null && !s.EsSimulacionMock)
+                .Where(s => s.UsuarioId == null && !s.EsSimulacionMock && s.FechaFin == null && s.FechaInicio >= umbralReciente)
                 .ToListAsync(tokenCancelacion);
 
             if (sesionesHuerfanas.Count == 0)
@@ -211,7 +214,7 @@ public sealed class RepositorioSesionesSqlite : IRepositorioSesionesLocal
             }
 
             await _contexto.SaveChangesAsync(tokenCancelacion);
-            _logger.LogInformation("Adoptadas {Cantidad} sesiones sin piloto previo para el usuario {UsuarioId}.", sesionesHuerfanas.Count, usuarioId);
+            _logger.LogInformation("Adoptadas {Cantidad} sesiones activas en pista sin piloto previo para el usuario {UsuarioId}.", sesionesHuerfanas.Count, usuarioId);
         }
         catch (Exception excepcion)
         {

@@ -116,6 +116,53 @@ public sealed class RepositoriosSqliteTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task ObtenerHistorialSesiones_ConUsuarioId_ExcluyeSesionesHuerfanasYDeOtrosUsuarios()
+    {
+        Guid usuario1 = Guid.NewGuid();
+        Guid usuario2 = Guid.NewGuid();
+
+        // Sesión huérfana sin usuario
+        await _repositorioSesiones.IniciarSesionAsync("monza", "std", "auto_1", 2, false, null);
+
+        // Sesión de usuario 1
+        await _repositorioSesiones.IniciarSesionAsync("monza", "std", "auto_1", 2, false, usuario1);
+
+        // Sesión de usuario 2
+        await _repositorioSesiones.IniciarSesionAsync("spa", "std", "auto_2", 2, false, usuario2);
+
+        var sesionesUsuario1 = await _repositorioSesiones.ObtenerHistorialSesionesAsync(1, 10, usuario1);
+        int totalUsuario1 = await _repositorioSesiones.ContarTotalSesionesAsync(usuario1);
+
+        Assert.Single(sesionesUsuario1);
+        Assert.Equal(usuario1, sesionesUsuario1[0].UsuarioId);
+        Assert.Equal(1, totalUsuario1);
+    }
+
+    [Fact]
+    public async Task AsignarUsuarioASesionesSinPilotoAsync_NoAdoptaSesionesCerradasNiAntiguas()
+    {
+        Guid nuevoUsuario = Guid.NewGuid();
+
+        // Sesión huérfana pero cerrada (histórica)
+        Guid sesionCerradaId = await _repositorioSesiones.IniciarSesionAsync("monza", "std", "auto_1", 2, false, null);
+        await _repositorioSesiones.FinalizarSesionAsync(sesionCerradaId);
+
+        // Sesión huérfana activa reciente (en pista ahora)
+        Guid sesionActivaId = await _repositorioSesiones.IniciarSesionAsync("imola", "std", "auto_1", 2, false, null);
+
+        await _repositorioSesiones.AsignarUsuarioASesionesSinPilotoAsync(nuevoUsuario);
+
+        var sesionCerrada = await _contexto.Sesiones.FindAsync(sesionCerradaId);
+        var sesionActiva = await _contexto.Sesiones.FindAsync(sesionActivaId);
+
+        // La sesión histórica previa sigue siendo huérfana (NULL)
+        Assert.Null(sesionCerrada!.UsuarioId);
+
+        // La sesión en curso fue adoptada
+        Assert.Equal(nuevoUsuario, sesionActiva!.UsuarioId);
+    }
+
+    [Fact]
     public async Task ObtenerSesionesPendientesSincronizacion_ExcluyeMockYSesionesActivas()
     {
         Guid idRealActiva = await _repositorioSesiones.IniciarSesionAsync("silverstone", "gp", "auto_1", 2, false);

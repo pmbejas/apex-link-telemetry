@@ -170,7 +170,9 @@ public sealed class ServicioTelemetriaRelay : BackgroundService
     {
         if (_ultimaVueltaRegistrada == -1 || CambioContextoDeSesion(cuadroActual))
         {
-            int mejorTiempoInicial = cuadroActual.MejorTiempoMs > 0 ? cuadroActual.MejorTiempoMs : 0;
+            int mejorTiempoInicial = (cuadroActual.VueltasCompletadas > 0 && cuadroActual.MejorTiempoMs > 0)
+                ? cuadroActual.MejorTiempoMs
+                : 0;
             ReiniciarEstadoSeguimientoSesion(
                 cuadroActual.VueltasCompletadas,
                 cuadroActual.Circuito,
