@@ -5,6 +5,7 @@ using System.IO;
 using System.IO.MemoryMappedFiles;
 using System.Threading;
 using Microsoft.Extensions.Logging;
+using Telemetria.Aplicacion.Servicios;
 using Telemetria.Dominio.Contratos.Hardware;
 using Telemetria.Dominio.Modelos;
 using Telemetria.Infraestructura.MemoriaCompartida.Estructuras;
@@ -16,6 +17,7 @@ public sealed class LectorAssettoCorsaWin32 : ILectorTelemetria
 
     private readonly object _cerrojoConexion = new();
     private readonly ILogger<LectorAssettoCorsaWin32> _logger;
+    private readonly CalculadorDeltaTrayectoria _calculadorDelta = new();
 
     private MemoryMappedFile? _archivoFisica;
     private MemoryMappedViewAccessor? _lectorFisica;
@@ -253,6 +255,7 @@ public sealed class LectorAssettoCorsaWin32 : ILectorTelemetria
             Array.Clear(_tiemposSectoresVueltaMs, 0, _tiemposSectoresVueltaMs.Length);
             _ultimaVueltaConocida = -1;
             _ultimoSectorConocido = 1;
+            _calculadorDelta.ReiniciarSesion();
         }
 
         if (_metadatosEstaticosCache == null || _metadatosEstaticosCache.LongitudPistaMetros <= 0.0f || cambioSesionOEstado)
@@ -267,6 +270,7 @@ public sealed class LectorAssettoCorsaWin32 : ILectorTelemetria
     {
         int sectorActualBase1 = Math.Clamp(grafica.CurrentSectorIndex + 1, 1, 3);
         bool fueraDePistaEnCuadro = fisica.NumberOfTyresOut >= 4;
+        bool enBoxesActual = grafica.IsInPitLane == 1 || (grafica.IsInPit == 1 && fisica.SpeedKmh > 3.0f);
 
         // 1. Detectar reinicio de sesión (el contador de vueltas retrocede)
         if (_ultimaVueltaConocida != -1 && grafica.CompletedLaps < _ultimaVueltaConocida)
@@ -277,6 +281,7 @@ public sealed class LectorAssettoCorsaWin32 : ILectorTelemetria
             _ultimoSectorConocido = sectorActualBase1;
             _vueltaActualEsValida = !fueraDePistaEnCuadro;
             _ultimaVueltaConocida = grafica.CompletedLaps;
+            _calculadorDelta.ReiniciarSesion();
             return (sectorActualBase1, _vueltaActualEsValida, (int[])_tiemposSectoresVueltaMs.Clone());
         }
 
@@ -290,6 +295,8 @@ public sealed class LectorAssettoCorsaWin32 : ILectorTelemetria
 
             bool validezVueltaCerrada = _vueltaActualEsValida;
             int[] sectoresCerrados = (int[])_tiemposSectoresVueltaMs.Clone();
+
+            _calculadorDelta.ConsolidarCierreDeVuelta(grafica.ILastTime, validezVueltaCerrada);
 
             if (grafica.ILastTime > 0 && validezVueltaCerrada)
             {
@@ -305,6 +312,12 @@ public sealed class LectorAssettoCorsaWin32 : ILectorTelemetria
             _vueltaActualEsValida = !fueraDePistaEnCuadro;
             _ultimaVueltaConocida = grafica.CompletedLaps;
             _ultimoSectorConocido = sectorActualBase1;
+
+            if (grafica.Status == 2)
+            {
+                _calculadorDelta.RegistrarMuestra(grafica.NormalizedCarPosition, grafica.ICurrentTime, enBoxesActual);
+            }
+
             return (sectorActualBase1, validezVueltaCerrada, sectoresCerrados);
         }
 
@@ -315,6 +328,11 @@ public sealed class LectorAssettoCorsaWin32 : ILectorTelemetria
             int indiceSectorCerrado = Math.Clamp(_ultimoSectorConocido - 1, 0, 2);
             _tiemposSectoresVueltaMs[indiceSectorCerrado] = grafica.LastSectorTime;
             _ultimoSectorConocido = sectorActualBase1;
+        }
+
+        if (grafica.Status == 2)
+        {
+            _calculadorDelta.RegistrarMuestra(grafica.NormalizedCarPosition, grafica.ICurrentTime, enBoxesActual);
         }
 
         if (fueraDePistaEnCuadro) _vueltaActualEsValida = false;
@@ -367,12 +385,7 @@ public sealed class LectorAssettoCorsaWin32 : ILectorTelemetria
             int mejorTiempoFinalMs = _mejorTiempoSesionLocalMs;
             string mejorTiempoFinalTexto = _mejorTiempoSesionLocalMs > 0 ? _mejorTiempoSesionLocalTexto : "--:--.---";
 
-            int deltaInstantaneoMs = 0;
-            if (mejorTiempoFinalMs > 0 && grafica.ICurrentTime > 0)
-            {
-                int tiempoEsperadoPosicionMs = (int)Math.Round(grafica.NormalizedCarPosition * mejorTiempoFinalMs);
-                deltaInstantaneoMs = grafica.ICurrentTime - tiempoEsperadoPosicionMs;
-            }
+            int deltaInstantaneoMs = _calculadorDelta.CalcularDeltaMs(grafica.NormalizedCarPosition, grafica.ICurrentTime);
 
             float tcNivel = fisica.Tc > 0.001f
                 ? (fisica.Tc < 1.0f ? (float)Math.Clamp(Math.Round(fisica.Tc * 12.5f), 1, 12) : fisica.Tc)
@@ -490,5 +503,6 @@ public sealed class LectorAssettoCorsaWin32 : ILectorTelemetria
         _ultimoEstadoSimulador = -1;
         _ultimaSesionActiva = -1;
         _ultimaVueltaConocida = -1;
+        _calculadorDelta.ReiniciarSesion();
     }
 }

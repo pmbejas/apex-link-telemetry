@@ -26,6 +26,7 @@ public sealed class ServicioTelemetriaRelay : BackgroundService
     private readonly TimeSpan _periodoPista60Hz;
     private readonly TimeSpan _periodoReposo5Hz;
     private readonly TimeSpan _intervaloReconexion;
+    private readonly CalculadorDeltaTrayectoria _calculadorDelta = new();
 
     private long _ultimaVersionConmutacion = -1;
     private bool _estabaConectado = false;
@@ -94,9 +95,7 @@ public sealed class ServicioTelemetriaRelay : BackgroundService
                     string textoMejor = $"{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds:D3}";
                     int delta = cuadroActual.DeltaMs != 0
                         ? cuadroActual.DeltaMs
-                        : ((cuadroActual.TiempoVueltaActualMs > 0 && cuadroActual.ProgresoPistaNormalizado > 0.001f)
-                            ? (cuadroActual.TiempoVueltaActualMs - (int)Math.Round(cuadroActual.ProgresoPistaNormalizado * _mejorTiempoSesionMs))
-                            : 0);
+                        : _calculadorDelta.CalcularDeltaMs(cuadroActual.ProgresoPistaNormalizado, cuadroActual.TiempoVueltaActualMs);
 
                     cuadroActual = cuadroActual with
                     {
@@ -104,6 +103,14 @@ public sealed class ServicioTelemetriaRelay : BackgroundService
                         MejorTiempoTexto = textoMejor,
                         DeltaMs = delta
                     };
+                }
+                else if (!cuadroActual.EsSimulacionMock && cuadroActual.DeltaMs == 0 && _calculadorDelta.TienePerfilReferencia)
+                {
+                    int delta = _calculadorDelta.CalcularDeltaMs(cuadroActual.ProgresoPistaNormalizado, cuadroActual.TiempoVueltaActualMs);
+                    if (delta != 0)
+                    {
+                        cuadroActual = cuadroActual with { DeltaMs = delta };
+                    }
                 }
 
                 if (cuadroActual.EstadoSimulador == ESTADO_SIMULADOR_EN_PISTA && !string.IsNullOrWhiteSpace(cuadroActual.Circuito))
@@ -197,12 +204,27 @@ public sealed class ServicioTelemetriaRelay : BackgroundService
 
         if (cuadroActual.VueltasCompletadas == _ultimaVueltaRegistrada)
         {
+            if (cuadroActual.EstadoSimulador == ESTADO_SIMULADOR_EN_PISTA)
+            {
+                _calculadorDelta.RegistrarMuestra(
+                    cuadroActual.ProgresoPistaNormalizado,
+                    cuadroActual.TiempoVueltaActualMs,
+                    cuadroActual.EstaEnBoxes);
+            }
             return cuadroActual;
         }
 
         if (cuadroActual.UltimoTiempoVueltaMs > 0)
         {
             cuadroActual = await ConsolidarCierreDeVueltaAsync(cuadroActual, tokenDetencion);
+        }
+
+        if (cuadroActual.EstadoSimulador == ESTADO_SIMULADOR_EN_PISTA)
+        {
+            _calculadorDelta.RegistrarMuestra(
+                cuadroActual.ProgresoPistaNormalizado,
+                cuadroActual.TiempoVueltaActualMs,
+                cuadroActual.EstaEnBoxes);
         }
 
         _ultimaVueltaRegistrada = cuadroActual.VueltasCompletadas;
@@ -218,6 +240,8 @@ public sealed class ServicioTelemetriaRelay : BackgroundService
         int tiempoCerradoMs = cuadroActual.UltimoTiempoVueltaMs;
         bool esRecord = (_mejorTiempoSesionMs == 0 || tiempoCerradoMs < _mejorTiempoSesionMs) && cuadroActual.EsVueltaValida;
         if (esRecord) _mejorTiempoSesionMs = tiempoCerradoMs;
+
+        _calculadorDelta.ConsolidarCierreDeVuelta(tiempoCerradoMs, cuadroActual.EsVueltaValida);
 
         int[] sectoresConsolidados = MapeadorTelemetria.ConsolidarSectoresMs(cuadroActual.TiemposSectoresMs, tiempoCerradoMs);
 
@@ -263,5 +287,6 @@ public sealed class ServicioTelemetriaRelay : BackgroundService
         _tipoSesionActiva = tipoSesion;
         _mejorTiempoSesionMs = mejorTiempoMs;
         _muestrasAcumuladasVuelta = 0;
+        _calculadorDelta.ReiniciarSesion();
     }
 }
